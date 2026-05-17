@@ -23,12 +23,12 @@ st.set_page_config(
 
 def normalize_doi(raw_doi: str) -> str:
     """
-    Clean DOI copied from browser, article page, or DOI link.
+    Clean DOI copied from browser, article page, DOI link, or BibTeX field.
     """
     if raw_doi is None:
         return ""
 
-    doi = raw_doi.strip()
+    doi = str(raw_doi).strip()
 
     doi = doi.replace("https://doi.org/", "")
     doi = doi.replace("http://doi.org/", "")
@@ -39,7 +39,9 @@ def normalize_doi(raw_doi: str) -> str:
     doi = doi.replace("DOI:", "")
     doi = doi.replace("doi:", "")
 
-    return doi.strip()
+    doi = doi.strip().strip(".").strip()
+
+    return doi
 
 
 def fetch_bibtex_from_doi(doi: str) -> str:
@@ -100,7 +102,8 @@ def extract_title_keyword(title: str) -> str:
         "a", "an", "the", "and", "or", "of", "in", "on", "for",
         "to", "with", "by", "from", "using", "based", "evidence",
         "new", "some", "towards", "toward", "into", "across",
-        "through", "between", "among", "over", "under"
+        "through", "between", "among", "over", "under", "its",
+        "their", "our", "your", "this", "that"
     }
 
     title = clean_text(title)
@@ -147,6 +150,7 @@ def make_unique_key(base_key: str, used_keys: set) -> str:
         return base_key
 
     counter = 2
+
     while f"{base_key}_{counter}" in used_keys:
         counter += 1
 
@@ -200,9 +204,10 @@ def parse_existing_bib(uploaded_file):
     - existing citation keys
     - existing DOIs
     - original .bib content
+    - number of entries
     """
     if uploaded_file is None:
-        return set(), set(), ""
+        return set(), set(), "", 0
 
     content = uploaded_file.getvalue().decode("utf-8", errors="ignore")
     database = bibtexparser.loads(content)
@@ -215,9 +220,11 @@ def parse_existing_bib(uploaded_file):
             existing_keys.add(entry["ID"])
 
         if "doi" in entry:
-            existing_dois.add(normalize_doi(entry["doi"]).lower())
+            normalized = normalize_doi(entry["doi"]).lower()
+            if normalized:
+                existing_dois.add(normalized)
 
-    return existing_keys, existing_dois, content
+    return existing_keys, existing_dois, content, len(database.entries)
 
 
 def split_doi_input(batch_text: str) -> list:
@@ -246,6 +253,23 @@ def split_doi_input(batch_text: str) -> list:
     return dois
 
 
+def build_merged_bib(existing_bib_content: str, new_bibtex: str) -> str:
+    """
+    Build a clean merged .bib file by preserving the uploaded .bib content
+    and appending only newly generated entries.
+    """
+    existing_clean = existing_bib_content.strip()
+    new_clean = new_bibtex.strip()
+
+    if existing_clean and new_clean:
+        return existing_clean + "\n\n% ===== Entries added by BibFlow =====\n\n" + new_clean
+
+    if existing_clean:
+        return existing_clean
+
+    return new_clean
+
+
 # ============================================================
 # App layout
 # ============================================================
@@ -255,16 +279,16 @@ st.subheader("A Streamlit Assistant for Zotero–Overleaf BibTeX Workflows")
 
 st.markdown(
     """
-    BibFlow helps researchers generate clean, Overleaf-ready BibTeX entries from DOI metadata.
-    
-    **Version 1.1 features:**
-    
+    BibFlow helps researchers generate, clean, deduplicate, and export Overleaf-ready BibTeX entries.
+
+    **Version 1.2 features:**
+
     - Single DOI to BibTeX
     - Batch DOI to BibTeX
-    - Automatic citation key generation
-    - Duplicate DOI checking
-    - Duplicate citation key checking
-    - Download single or combined `.bib` files
+    - Upload existing `references.bib`
+    - Skip DOI entries that already exist
+    - Generate unique citation keys
+    - Download a clean merged `.bib` file
     """
 )
 
@@ -282,6 +306,11 @@ allow_manual_key = st.sidebar.checkbox(
     value=True
 )
 
+skip_existing_doi = st.sidebar.checkbox(
+    "Skip DOI entries already in uploaded .bib",
+    value=True
+)
+
 st.sidebar.markdown("---")
 
 uploaded_bib = st.sidebar.file_uploader(
@@ -289,22 +318,22 @@ uploaded_bib = st.sidebar.file_uploader(
     type=["bib"]
 )
 
-existing_keys, existing_dois, existing_bib_content = parse_existing_bib(uploaded_bib)
+existing_keys, existing_dois, existing_bib_content, existing_entry_count = parse_existing_bib(uploaded_bib)
 
 if uploaded_bib is not None:
     st.sidebar.success(
-        f"Loaded {len(existing_keys)} citation keys and {len(existing_dois)} DOI records."
+        f"Loaded {existing_entry_count} entries, {len(existing_keys)} keys, and {len(existing_dois)} DOI records."
     )
 
 st.sidebar.markdown("---")
-st.sidebar.caption("BibFlow Version 1.1")
+st.sidebar.caption("BibFlow Version 1.2")
 
 
 # ============================================================
 # Tabs
 # ============================================================
 
-single_tab, batch_tab = st.tabs(["Single DOI", "Batch DOI"])
+single_tab, batch_tab = st.tabs(["Single DOI", "Batch DOI + Clean Merge"])
 
 
 # ============================================================
@@ -333,6 +362,11 @@ with single_tab:
             st.stop()
 
         doi = normalize_doi(doi_input)
+        doi_lower = doi.lower()
+
+        if uploaded_bib is not None and skip_existing_doi and doi_lower in existing_dois:
+            st.warning("This DOI already exists in your uploaded .bib file. It was not regenerated.")
+            st.stop()
 
         with st.spinner("Fetching BibTeX metadata..."):
             try:
@@ -348,7 +382,7 @@ with single_tab:
             st.stop()
 
         suggested_key = generate_citation_key(entry)
-        doi_lower = doi.lower()
+        final_suggested_key = make_unique_key(suggested_key, set(existing_keys))
 
         st.success("BibTeX generated successfully.")
 
@@ -362,7 +396,7 @@ with single_tab:
 
         with col2:
             if suggested_key in existing_keys:
-                st.warning("Suggested citation key already exists.")
+                st.warning(f"Suggested key already exists. Suggested new key: `{final_suggested_key}`")
             else:
                 st.info("Suggested citation key is available.")
 
@@ -371,11 +405,11 @@ with single_tab:
         if allow_manual_key:
             final_key = st.text_input(
                 "Citation key",
-                value=suggested_key,
+                value=final_suggested_key,
                 key="single_citation_key"
             )
         else:
-            final_key = suggested_key
+            final_key = final_suggested_key
             st.write(f"Suggested citation key: `{final_key}`")
 
         entry["ID"] = final_key
@@ -399,26 +433,36 @@ with single_tab:
             key="single_download_button"
         )
 
+        if uploaded_bib is not None:
+            merged_single_bibtex = build_merged_bib(existing_bib_content, cleaned_bibtex)
+
+            st.markdown("### Clean Merge Preview")
+            st.caption("Your uploaded .bib content is preserved. The new entry is appended at the end.")
+            st.code(merged_single_bibtex, language="bibtex")
+
+            st.download_button(
+                label="Download merged .bib file",
+                data=merged_single_bibtex,
+                file_name="merged_references.bib",
+                mime="text/plain",
+                key="single_merged_download_button"
+            )
+
 
 # ============================================================
-# Batch DOI workflow
+# Batch DOI + Clean Merge workflow
 # ============================================================
 
 with batch_tab:
 
-    st.markdown("## Batch DOI to BibTeX")
+    st.markdown("## Batch DOI to BibTeX + Clean Merge")
 
     st.markdown(
         """
         Paste multiple DOIs below, one DOI per line.
-        
-        Example:
-        
-        ```text
-        10.1093/rfs/hhq032
-        10.1111/jofi.12035
-        10.1093/rfs/hhu032
-        ```
+
+        If you upload an existing `references.bib`, BibFlow can automatically skip DOI entries
+        that already exist and append only new references.
         """
     )
 
@@ -429,7 +473,7 @@ with batch_tab:
     )
 
     generate_batch_button = st.button(
-        "Generate Batch BibTeX",
+        "Generate and Merge BibTeX",
         type="primary",
         key="batch_generate_button"
     )
@@ -448,15 +492,30 @@ with batch_tab:
         result_rows = []
 
         used_keys = set(existing_keys)
-        batch_seen_dois = set()
-
         progress_bar = st.progress(0)
+
+        skipped_count = 0
+        failed_count = 0
 
         for i, doi in enumerate(dois, start=1):
 
             doi_lower = doi.lower()
-            duplicate_in_existing_bib = doi_lower in existing_dois
-            duplicate_in_batch = doi_lower in batch_seen_dois
+
+            if uploaded_bib is not None and skip_existing_doi and doi_lower in existing_dois:
+                skipped_count += 1
+
+                result_rows.append(
+                    {
+                        "DOI": doi,
+                        "Citation Key": "",
+                        "Duplicate DOI in uploaded .bib": True,
+                        "Action": "Skipped",
+                        "Status": "Skipped because DOI already exists in uploaded .bib",
+                    }
+                )
+
+                progress_bar.progress(i / len(dois))
+                continue
 
             try:
                 raw_bibtex = fetch_bibtex_from_doi(doi)
@@ -465,37 +524,59 @@ with batch_tab:
                 if entry is None:
                     raise ValueError("Could not parse BibTeX entry.")
 
+                entry_doi = normalize_doi(entry.get("doi", "")).lower()
+                duplicate_by_returned_doi = uploaded_bib is not None and entry_doi in existing_dois
+
+                if skip_existing_doi and duplicate_by_returned_doi:
+                    skipped_count += 1
+
+                    result_rows.append(
+                        {
+                            "DOI": doi,
+                            "Citation Key": "",
+                            "Duplicate DOI in uploaded .bib": True,
+                            "Action": "Skipped",
+                            "Status": "Skipped because returned DOI already exists in uploaded .bib",
+                        }
+                    )
+
+                    progress_bar.progress(i / len(dois))
+                    continue
+
                 suggested_key = generate_citation_key(entry)
                 final_key = make_unique_key(suggested_key, used_keys)
 
                 entry["ID"] = final_key
 
                 used_keys.add(final_key)
-                batch_seen_dois.add(doi_lower)
                 generated_entries.append(entry)
 
-                if duplicate_in_existing_bib:
-                    status = "Generated, but DOI may already exist"
-                elif final_key != suggested_key:
-                    status = "Generated with renamed key"
+                if final_key != suggested_key:
+                    action = "Generated with renamed key"
+                    status = f"Original key `{suggested_key}` already existed. Used `{final_key}`."
                 else:
-                    status = "Generated"
+                    action = "Generated"
+                    status = "New BibTeX entry generated."
 
                 result_rows.append(
                     {
                         "DOI": doi,
                         "Citation Key": final_key,
-                        "Duplicate DOI in uploaded .bib": duplicate_in_existing_bib,
+                        "Duplicate DOI in uploaded .bib": False,
+                        "Action": action,
                         "Status": status,
                     }
                 )
 
             except Exception as e:
+                failed_count += 1
+
                 result_rows.append(
                     {
                         "DOI": doi,
                         "Citation Key": "",
-                        "Duplicate DOI in uploaded .bib": duplicate_in_existing_bib,
+                        "Duplicate DOI in uploaded .bib": False,
+                        "Action": "Failed",
                         "Status": f"Failed: {e}",
                     }
                 )
@@ -505,50 +586,60 @@ with batch_tab:
         st.divider()
 
         successful_count = len(generated_entries)
-        failed_count = len(dois) - successful_count
 
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
 
         with col1:
             st.metric("Input DOIs", len(dois))
 
         with col2:
-            st.metric("Generated", successful_count)
+            st.metric("New entries", successful_count)
 
         with col3:
+            st.metric("Skipped duplicates", skipped_count)
+
+        with col4:
             st.metric("Failed", failed_count)
 
-        st.markdown("### Batch Processing Summary")
+        st.markdown("### Processing Summary")
         st.dataframe(result_rows, use_container_width=True)
 
         if generated_entries:
 
-            combined_bibtex = entries_to_bibtex(generated_entries)
+            new_entries_bibtex = entries_to_bibtex(generated_entries)
 
-            st.markdown("### Combined BibTeX")
-            st.code(combined_bibtex, language="bibtex")
+            st.markdown("### New BibTeX Entries")
+            st.code(new_entries_bibtex, language="bibtex")
 
             st.download_button(
-                label="Download combined .bib file",
-                data=combined_bibtex,
-                file_name="bibflow_batch_references.bib",
+                label="Download new entries only",
+                data=new_entries_bibtex,
+                file_name="bibflow_new_entries.bib",
                 mime="text/plain",
-                key="batch_download_button"
+                key="batch_new_entries_download_button"
             )
 
             if uploaded_bib is not None:
-                merged_bibtex_preview = existing_bib_content.strip() + "\n\n" + combined_bibtex
+                merged_bibtex = build_merged_bib(existing_bib_content, new_entries_bibtex)
 
-                st.markdown("### Optional Preview: Uploaded `.bib` + New Entries")
+                st.markdown("### Clean Merged BibTeX")
                 st.caption(
-                    "This is only a preview. Version 1.2 will improve merging and automatically skip duplicated DOI entries."
+                    "Your uploaded .bib content is preserved. Only new non-duplicate entries are appended."
                 )
-                st.code(merged_bibtex_preview, language="bibtex")
+                st.code(merged_bibtex, language="bibtex")
 
                 st.download_button(
-                    label="Download preview merged .bib file",
-                    data=merged_bibtex_preview,
-                    file_name="bibflow_preview_merged_references.bib",
+                    label="Download clean merged .bib file",
+                    data=merged_bibtex,
+                    file_name="merged_references.bib",
                     mime="text/plain",
-                    key="batch_preview_merged_download_button"
+                    key="batch_merged_download_button"
                 )
+            else:
+                st.info("Upload an existing references.bib file to enable clean merge output.")
+
+        else:
+            if skipped_count > 0 and failed_count == 0:
+                st.warning("No new entries were generated because all input DOIs already exist in your uploaded .bib file.")
+            elif failed_count > 0:
+                st.warning("No new entries were generated. Please check the failed DOI(s).")
