@@ -33,7 +33,7 @@ st.set_page_config(
 # App branding and UI helpers
 # ============================================================
 
-APP_VERSION = "2.0D"
+APP_VERSION = "2.0E"
 APP_NAME = "BibFlow"
 APP_TAGLINE = "A Research Library Assistant for BibTeX, Overleaf, and Academic Journal Ranking Workflows"
 
@@ -2288,6 +2288,314 @@ def summarize_annotations(df: pd.DataFrame) -> dict:
     }
 
 
+
+# ============================================================
+# Research dashboard and report helper functions
+# ============================================================
+
+def make_count_table(
+    df: pd.DataFrame,
+    column: str,
+    empty_label: str = "Unspecified",
+    order: list = None,
+) -> pd.DataFrame:
+    """
+    Build a count table for dashboard summaries.
+    """
+    if df.empty or column not in df.columns:
+        return pd.DataFrame(columns=[column, "Count", "Share (%)"])
+
+    values = df[column].fillna("").astype(str).str.strip()
+    values = values.replace("", empty_label)
+
+    count_df = values.value_counts(dropna=False).reset_index()
+    count_df.columns = [column, "Count"]
+
+    total = int(count_df["Count"].sum())
+    if total > 0:
+        count_df["Share (%)"] = (count_df["Count"] / total * 100).round(1)
+    else:
+        count_df["Share (%)"] = 0.0
+
+    if order:
+        order_map = {value: idx for idx, value in enumerate(order)}
+        count_df["_order"] = count_df[column].map(order_map).fillna(len(order) + 1)
+        count_df = count_df.sort_values(["_order", "Count"], ascending=[True, False])
+        count_df = count_df.drop(columns=["_order"])
+
+    return count_df.reset_index(drop=True)
+
+
+def make_tag_frequency_table(
+    df: pd.DataFrame,
+    tag_col: str = "Research Tags",
+    top_n: int = 20,
+) -> pd.DataFrame:
+    """
+    Split comma/semicolon-separated research tags and build a frequency table.
+    """
+    if df.empty or tag_col not in df.columns:
+        return pd.DataFrame(columns=["Research Tag", "Count"])
+
+    tag_counts = {}
+
+    for raw_tags in df[tag_col].fillna("").astype(str):
+        raw_tags = raw_tags.replace(";", ",")
+        tags = [tag.strip().lower() for tag in raw_tags.split(",") if tag.strip()]
+
+        for tag in tags:
+            tag_counts[tag] = tag_counts.get(tag, 0) + 1
+
+    if not tag_counts:
+        return pd.DataFrame(columns=["Research Tag", "Count"])
+
+    tag_df = pd.DataFrame(
+        sorted(tag_counts.items(), key=lambda item: item[1], reverse=True),
+        columns=["Research Tag", "Count"],
+    )
+
+    return tag_df.head(top_n).reset_index(drop=True)
+
+
+def make_top_journal_table(df: pd.DataFrame, top_n: int = 15) -> pd.DataFrame:
+    """
+    Build a top-journals table with AJG/FT50 context.
+    """
+    required_col = "Journal / Venue"
+
+    if df.empty or required_col not in df.columns:
+        return pd.DataFrame(columns=["Journal / Venue", "Count", "Best AJG Rating", "FT50"])
+
+    working = df.copy()
+    working[required_col] = working[required_col].fillna("").astype(str).str.strip()
+    working = working[working[required_col] != ""]
+
+    if working.empty:
+        return pd.DataFrame(columns=["Journal / Venue", "Count", "Best AJG Rating", "FT50"])
+
+    rows = []
+
+    for journal, group in working.groupby(required_col):
+        ratings = group.get("AJG Rating", pd.Series(dtype=str)).fillna("").astype(str).tolist()
+        best_rating = ""
+        best_value = -1
+
+        for rating in ratings:
+            value = rating_value(rating)
+            if value > best_value:
+                best_value = value
+                best_rating = rating
+
+        ft50_flag = "Yes" if "FT50" in group.columns and (group["FT50"] == "Yes").any() else ""
+
+        rows.append(
+            {
+                "Journal / Venue": journal,
+                "Count": len(group),
+                "Best AJG Rating": best_rating,
+                "FT50": ft50_flag,
+            }
+        )
+
+    top_df = pd.DataFrame(rows)
+    top_df = top_df.sort_values(["Count", "Journal / Venue"], ascending=[False, True])
+
+    return top_df.head(top_n).reset_index(drop=True)
+
+
+def make_focus_paper_table(
+    df: pd.DataFrame,
+    condition_col: str = None,
+    condition_value=True,
+    max_rows: int = 20,
+) -> pd.DataFrame:
+    """
+    Build a compact table for important/core/citation-candidate papers.
+    """
+    if df.empty:
+        return pd.DataFrame()
+
+    working = df.copy()
+
+    if condition_col and condition_col in working.columns:
+        if isinstance(condition_value, bool):
+            working = working[working[condition_col].astype(bool) == condition_value]
+        else:
+            working = working[working[condition_col] == condition_value]
+
+    columns = [
+        "Citation Key",
+        "Title",
+        "Year",
+        "Journal / Venue",
+        "AJG Rating",
+        "FT50",
+        "Reading Status",
+        "Priority",
+        "Paper Type",
+        "Research Tags",
+        "Notes",
+    ]
+
+    columns = [col for col in columns if col in working.columns]
+
+    if working.empty:
+        return pd.DataFrame(columns=columns)
+
+    if "Year" in working.columns:
+        working = working.sort_values("Year", ascending=False)
+
+    return working[columns].head(max_rows).reset_index(drop=True)
+
+
+def dataframe_to_simple_markdown(df: pd.DataFrame, max_rows: int = 20) -> str:
+    """
+    Convert a small dataframe into a simple markdown table without requiring tabulate.
+    """
+    if df is None or df.empty:
+        return "_No records._"
+
+    display_df = df.head(max_rows).fillna("").astype(str)
+
+    def clean_cell(value: str) -> str:
+        value = str(value).replace("|", "\\|")
+        value = re.sub(r"\s+", " ", value).strip()
+        return value
+
+    columns = list(display_df.columns)
+    header = "| " + " | ".join(clean_cell(col) for col in columns) + " |"
+    separator = "| " + " | ".join(["---"] * len(columns)) + " |"
+
+    rows = []
+    for _, row in display_df.iterrows():
+        rows.append("| " + " | ".join(clean_cell(row[col]) for col in columns) + " |")
+
+    return "\n".join([header, separator] + rows)
+
+
+def build_literature_review_report(df: pd.DataFrame, scope_label: str = "Filtered library") -> str:
+    """
+    Build a downloadable markdown report for the current research library view.
+    """
+    working = df.copy()
+
+    summary = summarize_research_library(working)
+    ranking_summary = summarize_ranking_matches(working)
+    annotation_summary = summarize_annotations(working)
+
+    ajg_table = make_count_table(
+        working,
+        "AJG Rating",
+        empty_label="Unmatched / No AJG rating",
+        order=["4*", "4", "3", "2", "1", "Unmatched / No AJG rating"],
+    )
+    reading_table = make_count_table(working, "Reading Status", empty_label="Unspecified")
+    priority_table = make_count_table(working, "Priority", empty_label="Unspecified")
+    paper_type_table = make_count_table(working, "Paper Type", empty_label="Unspecified")
+    field_table = make_count_table(working, "AJG Field", empty_label="Unspecified field")
+    tag_table = make_tag_frequency_table(working, top_n=20)
+    top_journals = make_top_journal_table(working, top_n=15)
+    citation_candidates = make_focus_paper_table(
+        working,
+        condition_col="Citation Candidate",
+        condition_value=True,
+        max_rows=20,
+    )
+    core_papers = make_focus_paper_table(
+        working,
+        condition_col="Priority",
+        condition_value="Core paper",
+        max_rows=20,
+    )
+    important_papers = make_focus_paper_table(
+        working,
+        condition_col="Important",
+        condition_value=True,
+        max_rows=20,
+    )
+
+    report = f"""# BibFlow Literature Review Report
+
+**Scope:** {scope_label}  
+**Generated by:** BibFlow Version {APP_VERSION}
+
+## 1. Library Overview
+
+- Total references: {summary['total_references']}
+- References with DOI: {summary['doi_count']}
+- References missing DOI: {summary['missing_doi_count']}
+- Unique journals / venues: {summary['journal_count']}
+- Year range: {summary['year_range']}
+
+## 2. Journal Ranking Overview
+
+- Matched journals: {ranking_summary['matched']}
+- Unmatched journals: {ranking_summary['unmatched']}
+- AJG 3+ references: {ranking_summary['ajg_3_plus']}
+- AJG 4 / 4* references: {ranking_summary['ajg_4_plus']}
+- FT50 references: {ranking_summary['ft50_count']}
+
+### AJG Rating Distribution
+
+{dataframe_to_simple_markdown(ajg_table)}
+
+### AJG Field Distribution
+
+{dataframe_to_simple_markdown(field_table)}
+
+### Top Journals / Venues
+
+{dataframe_to_simple_markdown(top_journals)}
+
+## 3. Reading Progress
+
+- Read: {annotation_summary['read']}
+- Reading: {annotation_summary['reading']}
+- Important: {annotation_summary['important']}
+- Citation candidates: {annotation_summary['citation_candidates']}
+- Core papers: {annotation_summary['core_papers']}
+
+### Reading Status Distribution
+
+{dataframe_to_simple_markdown(reading_table)}
+
+### Priority Distribution
+
+{dataframe_to_simple_markdown(priority_table)}
+
+### Paper Type Distribution
+
+{dataframe_to_simple_markdown(paper_type_table)}
+
+### Research Tag Frequency
+
+{dataframe_to_simple_markdown(tag_table)}
+
+## 4. Citation Pipeline
+
+### Core Papers
+
+{dataframe_to_simple_markdown(core_papers)}
+
+### Citation Candidates
+
+{dataframe_to_simple_markdown(citation_candidates)}
+
+### Important Papers
+
+{dataframe_to_simple_markdown(important_papers)}
+
+## 5. Interpretation Notes
+
+- AJG ranks journals, not individual papers.
+- FT50 identifies journal-list membership, not individual paper quality.
+- Fuzzy journal matches should be manually checked.
+- Use this report as a literature-review management summary, not as a mechanical quality judgement.
+"""
+
+    return report
+
+
 # ============================================================
 # Annotation import / restore helper functions
 # ============================================================
@@ -3395,8 +3703,8 @@ with library_tab:
         """
         Upload a `.bib` file and turn your references into a searchable and editable research library.
 
-        **Version 2.0D** adds import/restore support on top of the Version 2.0C annotation workflow:
-        upload yesterday's annotated CSV, restore reading status, paper type, priority, tags, citation-candidate flags, importance flags, and notes.
+        **Version 2.0E** adds a dashboard and literature-review report on top of the Version 2.0D restore workflow:
+        review AJG/FT50 coverage, reading progress, core papers, citation candidates, top journals, and research tags.
 
         Ranking data is optional:
         - If a private full ranking file exists, BibFlow loads it automatically.
@@ -3408,7 +3716,7 @@ with library_tab:
     st.info(
         "For public deployment, the full ranking file should stay private. "
         "Keep it in `data/private/` and exclude this folder from GitHub. "
-        "Annotations can be restored from a previously downloaded annotated CSV, and you can download a new annotated CSV after editing."
+        "Annotations can be restored from a previously downloaded annotated CSV. Version 2.0E also generates dashboard summaries and a downloadable literature-review report."
     )
 
     st.markdown("### 1. Upload BibTeX Library")
@@ -4008,6 +4316,201 @@ with library_tab:
 
             st.divider()
 
+            st.markdown("### Research Library Dashboard")
+
+            dashboard_scope = st.radio(
+                "Dashboard scope",
+                options=["Filtered view", "Full library"],
+                horizontal=True,
+                key="dashboard_scope_selector",
+            )
+
+            dashboard_df = filtered_library_df.copy() if dashboard_scope == "Filtered view" else library_df.copy()
+            report_scope_label = "Filtered library" if dashboard_scope == "Filtered view" else "Full library"
+
+            dashboard_summary = summarize_research_library(dashboard_df)
+            dashboard_ranking_summary = summarize_ranking_matches(dashboard_df)
+            dashboard_annotation_summary = summarize_annotations(dashboard_df)
+
+            dash_col1, dash_col2, dash_col3, dash_col4, dash_col5 = st.columns(5)
+
+            with dash_col1:
+                st.metric("Dashboard References", dashboard_summary["total_references"])
+
+            with dash_col2:
+                st.metric("AJG 3+", dashboard_ranking_summary["ajg_3_plus"])
+
+            with dash_col3:
+                st.metric("AJG 4 / 4*", dashboard_ranking_summary["ajg_4_plus"])
+
+            with dash_col4:
+                st.metric("Citation Candidates", dashboard_annotation_summary["citation_candidates"])
+
+            with dash_col5:
+                st.metric("Core Papers", dashboard_annotation_summary["core_papers"])
+
+            dashboard_tab1, dashboard_tab2, dashboard_tab3, dashboard_tab4 = st.tabs(
+                [
+                    "Ranking Overview",
+                    "Reading Progress",
+                    "Journals & Tags",
+                    "Citation Pipeline",
+                ]
+            )
+
+            with dashboard_tab1:
+                ajg_distribution = make_count_table(
+                    dashboard_df,
+                    "AJG Rating",
+                    empty_label="Unmatched / No AJG rating",
+                    order=["4*", "4", "3", "2", "1", "Unmatched / No AJG rating"],
+                )
+                field_distribution = make_count_table(
+                    dashboard_df,
+                    "AJG Field",
+                    empty_label="Unspecified field",
+                )
+                match_distribution = make_count_table(
+                    dashboard_df,
+                    "Ranking Match Status",
+                    empty_label="Unspecified",
+                )
+
+                rank_left, rank_right = st.columns(2)
+
+                with rank_left:
+                    st.markdown("#### AJG Rating Distribution")
+                    st.dataframe(ajg_distribution, use_container_width=True, hide_index=True)
+                    if not ajg_distribution.empty:
+                        st.bar_chart(ajg_distribution.set_index("AJG Rating")["Count"])
+
+                with rank_right:
+                    st.markdown("#### Ranking Match Status")
+                    st.dataframe(match_distribution, use_container_width=True, hide_index=True)
+                    if not match_distribution.empty:
+                        st.bar_chart(match_distribution.set_index("Ranking Match Status")["Count"])
+
+                st.markdown("#### AJG Field Distribution")
+                st.dataframe(field_distribution.head(20), use_container_width=True, hide_index=True)
+
+            with dashboard_tab2:
+                reading_distribution = make_count_table(
+                    dashboard_df,
+                    "Reading Status",
+                    empty_label="Unspecified",
+                )
+                priority_distribution = make_count_table(
+                    dashboard_df,
+                    "Priority",
+                    empty_label="Unspecified",
+                )
+                paper_type_distribution = make_count_table(
+                    dashboard_df,
+                    "Paper Type",
+                    empty_label="Unspecified",
+                )
+
+                progress_left, progress_right = st.columns(2)
+
+                with progress_left:
+                    st.markdown("#### Reading Status")
+                    st.dataframe(reading_distribution, use_container_width=True, hide_index=True)
+                    if not reading_distribution.empty:
+                        st.bar_chart(reading_distribution.set_index("Reading Status")["Count"])
+
+                with progress_right:
+                    st.markdown("#### Priority")
+                    st.dataframe(priority_distribution, use_container_width=True, hide_index=True)
+                    if not priority_distribution.empty:
+                        st.bar_chart(priority_distribution.set_index("Priority")["Count"])
+
+                st.markdown("#### Paper Type")
+                st.dataframe(paper_type_distribution, use_container_width=True, hide_index=True)
+
+            with dashboard_tab3:
+                top_journals = make_top_journal_table(dashboard_df, top_n=20)
+                tag_frequency = make_tag_frequency_table(dashboard_df, top_n=25)
+
+                journal_left, journal_right = st.columns(2)
+
+                with journal_left:
+                    st.markdown("#### Top Journals / Venues")
+                    st.dataframe(top_journals, use_container_width=True, hide_index=True)
+
+                with journal_right:
+                    st.markdown("#### Research Tag Frequency")
+                    st.dataframe(tag_frequency, use_container_width=True, hide_index=True)
+                    if not tag_frequency.empty:
+                        st.bar_chart(tag_frequency.set_index("Research Tag")["Count"])
+
+            with dashboard_tab4:
+                core_papers_df = make_focus_paper_table(
+                    dashboard_df,
+                    condition_col="Priority",
+                    condition_value="Core paper",
+                    max_rows=30,
+                )
+                citation_candidates_df = make_focus_paper_table(
+                    dashboard_df,
+                    condition_col="Citation Candidate",
+                    condition_value=True,
+                    max_rows=30,
+                )
+                important_papers_df = make_focus_paper_table(
+                    dashboard_df,
+                    condition_col="Important",
+                    condition_value=True,
+                    max_rows=30,
+                )
+
+                st.markdown("#### Core Papers")
+                st.dataframe(core_papers_df, use_container_width=True, hide_index=True)
+
+                st.markdown("#### Citation Candidates")
+                st.dataframe(citation_candidates_df, use_container_width=True, hide_index=True)
+
+                st.markdown("#### Important Papers")
+                st.dataframe(important_papers_df, use_container_width=True, hide_index=True)
+
+            literature_review_report = build_literature_review_report(
+                dashboard_df,
+                scope_label=report_scope_label,
+            )
+
+            st.download_button(
+                label="Download literature-review report as Markdown",
+                data=literature_review_report.encode("utf-8"),
+                file_name="bibflow_literature_review_report.md",
+                mime="text/markdown",
+                key="download_literature_review_report_md",
+            )
+
+            dashboard_summary_tables = []
+
+            for table_name, table_df in [
+                ("ajg_distribution", make_count_table(dashboard_df, "AJG Rating", empty_label="Unmatched / No AJG rating")),
+                ("reading_status", make_count_table(dashboard_df, "Reading Status", empty_label="Unspecified")),
+                ("priority", make_count_table(dashboard_df, "Priority", empty_label="Unspecified")),
+                ("paper_type", make_count_table(dashboard_df, "Paper Type", empty_label="Unspecified")),
+                ("research_tags", make_tag_frequency_table(dashboard_df, top_n=50)),
+                ("top_journals", make_top_journal_table(dashboard_df, top_n=50)),
+            ]:
+                temp_df = table_df.copy()
+                temp_df.insert(0, "Summary Table", table_name)
+                dashboard_summary_tables.append(temp_df)
+
+            dashboard_summary_export = pd.concat(dashboard_summary_tables, ignore_index=True, sort=False)
+
+            st.download_button(
+                label="Download dashboard summary tables as CSV",
+                data=dashboard_summary_export.to_csv(index=False).encode("utf-8"),
+                file_name="bibflow_dashboard_summary_tables.csv",
+                mime="text/csv",
+                key="download_dashboard_summary_tables_csv",
+            )
+
+            st.divider()
+
             st.markdown("### Export")
 
             csv_data = filtered_library_df.to_csv(index=False).encode("utf-8")
@@ -4083,6 +4586,7 @@ with library_tab:
                 - The correct interpretation is: *this paper is published in an AJG 3 journal*.
                 - FT50 also identifies journals, not paper quality directly.
                 - Reading status, tags, priority, citation flags, importance flags, and notes can now be restored from a previously downloaded annotated CSV.
+                - Version 2.0E adds a dashboard and downloadable literature-review report for your filtered or full library.
                 - To continue your work later, download the annotated CSV and upload it again in the restore section.
                 - Fuzzy matches should be manually checked, especially when the match score is below 1.00.
                 - Keep the full ranking file private unless redistribution is clearly allowed.
