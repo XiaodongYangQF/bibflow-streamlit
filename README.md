@@ -68,3 +68,18 @@ New features:
 - Generate unique citation keys against existing keys
 - Append only new entries to the existing `.bib`
 - Download a clean `merged_references.bib` file
+
+
+## Version 1.3 — Title Search when DOI is Unknown
+
+Version 1.3 adds title-based reference search.
+
+New features:
+
+- Search papers by title using Crossref metadata
+- Add optional author name to improve search quality
+- Display candidate papers with title, author, year, venue, DOI, and score
+- Select the correct candidate
+- Generate BibTeX from the selected DOI
+- Check duplicate DOI and citation key records
+- Download or merge the generated BibTeX entry
