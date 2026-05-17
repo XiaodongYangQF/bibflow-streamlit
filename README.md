@@ -40,3 +40,17 @@ The first stable version supports:
 - Cleaned BibTeX download
 
 This version provides a minimal but complete workflow for researchers who use Zotero, BibTeX, and Overleaf.
+
+
+## Version 1.1 — Batch DOI Processing
+
+Version 1.1 adds batch DOI processing.
+
+New features:
+
+- Paste multiple DOIs, one per line
+- Fetch BibTeX entries in batch
+- Generate unique citation keys
+- Detect duplicate DOI records against uploaded `.bib` files
+- Download a combined `.bib` file
+- Preview uploaded `.bib` plus newly generated entries
