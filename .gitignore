@@ -5,3 +5,28 @@ __pycache__/
 .venv/
 venv/
 .ipynb_checkpoints/data/private/
+
+
+# ============================================================
+# BibFlow private/local files
+# ============================================================
+
+# Private ranking files should not be committed.
+data/private/
+*.private.csv
+*.private.xlsx
+
+# Local exports from BibFlow
+bibflow_enriched_research_library_*.csv
+bibflow_annotated_research_library_*.csv
+bibflow_unmatched_journals_*.csv
+bibflow_literature_review_report_*.md
+bibflow_dashboard_summary_*.csv
+
+# Python / Streamlit cache
+__pycache__/
+*.py[cod]
+.streamlit/secrets.toml
+
+# macOS
+.DS_Store
