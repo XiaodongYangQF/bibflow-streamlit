@@ -33,7 +33,7 @@ st.set_page_config(
 # App branding and UI helpers
 # ============================================================
 
-APP_VERSION = "2.0B"
+APP_VERSION = "2.0D"
 APP_NAME = "BibFlow"
 APP_TAGLINE = "A Research Library Assistant for BibTeX, Overleaf, and Academic Journal Ranking Workflows"
 
@@ -1947,6 +1947,11 @@ def filter_library_dataframe(
     selected_match_status: list = None,
     only_ajg_3_plus: bool = False,
     only_ft50: bool = False,
+    selected_reading_status: list = None,
+    selected_priorities: list = None,
+    selected_paper_types: list = None,
+    only_citation_candidates: bool = False,
+    only_important: bool = False,
 ) -> pd.DataFrame:
     """
     Apply search and filters to the Research Library dataframe.
@@ -1968,6 +1973,11 @@ def filter_library_dataframe(
             "FT50",
             "Matched Journal",
             "Ranking Match Status",
+            "Reading Status",
+            "Paper Type",
+            "Priority",
+            "Research Tags",
+            "Notes",
         ]
 
         search_cols = [col for col in search_cols if col in filtered.columns]
@@ -2009,6 +2019,21 @@ def filter_library_dataframe(
 
     if only_ft50:
         filtered = filtered[filtered["FT50"] == "Yes"]
+
+    if selected_reading_status:
+        filtered = filtered[filtered["Reading Status"].isin(selected_reading_status)]
+
+    if selected_priorities:
+        filtered = filtered[filtered["Priority"].isin(selected_priorities)]
+
+    if selected_paper_types:
+        filtered = filtered[filtered["Paper Type"].isin(selected_paper_types)]
+
+    if only_citation_candidates:
+        filtered = filtered[filtered["Citation Candidate"].astype(bool)]
+
+    if only_important:
+        filtered = filtered[filtered["Important"].astype(bool)]
 
     return filtered
 
@@ -2087,6 +2112,322 @@ def summarize_ranking_matches(df: pd.DataFrame) -> dict:
     }
 
 
+
+# ============================================================
+# Research annotation helper functions
+# ============================================================
+
+READING_STATUS_OPTIONS = [
+    "Unread",
+    "Reading",
+    "Read",
+    "To revisit",
+    "Skimmed",
+]
+
+PRIORITY_OPTIONS = [
+    "Low",
+    "Medium",
+    "High",
+    "Core paper",
+]
+
+PAPER_TYPE_OPTIONS = [
+    "",
+    "Methodology paper",
+    "Theory paper",
+    "Empirical paper",
+    "Literature review",
+    "Dataset paper",
+    "Application paper",
+    "Background reading",
+]
+
+ANNOTATION_COLUMNS = [
+    "Reading Status",
+    "Paper Type",
+    "Priority",
+    "Research Tags",
+    "Citation Candidate",
+    "Important",
+    "Notes",
+]
+
+
+def build_annotation_id(row: pd.Series) -> str:
+    """
+    Build a stable ID for storing annotations during the Streamlit session.
+
+    Citation Key is preferred. If missing, use title + year + journal.
+    """
+    citation_key = str(row.get("Citation Key", "")).strip()
+
+    if citation_key:
+        base = citation_key
+    else:
+        base = "|".join(
+            [
+                str(row.get("Title", "")).strip(),
+                str(row.get("Year", "")).strip(),
+                str(row.get("Journal / Venue", "")).strip(),
+            ]
+        )
+
+    base = base.lower()
+    base = re.sub(r"[^a-z0-9]+", "_", base)
+    base = re.sub(r"_+", "_", base).strip("_")
+
+    return base
+
+
+def add_annotation_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Add editable annotation columns to the research library dataframe.
+    """
+    annotated = df.copy()
+
+    if "Annotation ID" not in annotated.columns:
+        annotated["Annotation ID"] = annotated.apply(build_annotation_id, axis=1)
+
+    default_values = {
+        "Reading Status": "Unread",
+        "Paper Type": "",
+        "Priority": "Medium",
+        "Research Tags": "",
+        "Citation Candidate": False,
+        "Important": False,
+        "Notes": "",
+    }
+
+    for col, default_value in default_values.items():
+        if col not in annotated.columns:
+            annotated[col] = default_value
+
+    return annotated
+
+
+def initialize_annotation_store() -> None:
+    """
+    Initialize Streamlit session-state storage for annotations.
+    """
+    if "research_library_annotations" not in st.session_state:
+        st.session_state["research_library_annotations"] = {}
+
+
+def apply_annotation_store(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply saved session annotations to the current dataframe.
+    """
+    initialize_annotation_store()
+
+    annotated = df.copy()
+    store = st.session_state["research_library_annotations"]
+
+    for idx, row in annotated.iterrows():
+        annotation_id = row.get("Annotation ID", "")
+
+        if annotation_id in store:
+            for col in ANNOTATION_COLUMNS:
+                if col in store[annotation_id]:
+                    annotated.at[idx, col] = store[annotation_id][col]
+
+    return annotated
+
+
+def update_annotation_store(edited_df: pd.DataFrame) -> None:
+    """
+    Save edited annotations back to Streamlit session state.
+    """
+    initialize_annotation_store()
+
+    store = st.session_state["research_library_annotations"]
+
+    for _, row in edited_df.iterrows():
+        annotation_id = row.get("Annotation ID", "")
+
+        if not annotation_id:
+            annotation_id = build_annotation_id(row)
+
+        if not annotation_id:
+            continue
+
+        store[annotation_id] = {
+            col: row.get(col, "")
+            for col in ANNOTATION_COLUMNS
+            if col in edited_df.columns
+        }
+
+    st.session_state["research_library_annotations"] = store
+
+
+def summarize_annotations(df: pd.DataFrame) -> dict:
+    """
+    Summarize reading and annotation progress.
+    """
+    if df.empty:
+        return {
+            "read": 0,
+            "reading": 0,
+            "important": 0,
+            "citation_candidates": 0,
+            "core_papers": 0,
+        }
+
+    read_count = (df["Reading Status"] == "Read").sum()
+    reading_count = (df["Reading Status"] == "Reading").sum()
+    important_count = df["Important"].astype(bool).sum()
+    citation_candidates = df["Citation Candidate"].astype(bool).sum()
+    core_papers = (df["Priority"] == "Core paper").sum()
+
+    return {
+        "read": int(read_count),
+        "reading": int(reading_count),
+        "important": int(important_count),
+        "citation_candidates": int(citation_candidates),
+        "core_papers": int(core_papers),
+    }
+
+
+# ============================================================
+# Annotation import / restore helper functions
+# ============================================================
+
+def parse_bool_for_annotation(value) -> bool:
+    """
+    Convert common CSV boolean values to True/False for annotation columns.
+    """
+    if isinstance(value, bool):
+        return value
+
+    if value is None or pd.isna(value):
+        return False
+
+    value = str(value).strip().lower()
+
+    return value in {"true", "yes", "y", "1", "checked", "important"}
+
+
+def load_annotated_library_file(uploaded_file) -> pd.DataFrame:
+    """
+    Load a previously exported annotated research library file.
+
+    Supported formats:
+    - CSV
+    - XLSX
+    - XLS
+    """
+    file_name = uploaded_file.name.lower()
+
+    if file_name.endswith(".csv"):
+        try:
+            return pd.read_csv(uploaded_file)
+        except UnicodeDecodeError:
+            uploaded_file.seek(0)
+            return pd.read_csv(uploaded_file, encoding="latin1")
+
+    if file_name.endswith(".xlsx") or file_name.endswith(".xls"):
+        return pd.read_excel(uploaded_file)
+
+    raise ValueError("Unsupported annotation file format. Please upload CSV, XLSX, or XLS.")
+
+
+def prepare_imported_annotations(raw_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Standardize a previously exported annotated library file before restoring annotations.
+    """
+    imported = raw_df.copy()
+
+    # Build Annotation ID if an older export does not contain it.
+    if "Annotation ID" not in imported.columns:
+        imported["Annotation ID"] = imported.apply(build_annotation_id, axis=1)
+    else:
+        missing_id_mask = imported["Annotation ID"].fillna("").astype(str).str.strip().eq("")
+        if missing_id_mask.any():
+            imported.loc[missing_id_mask, "Annotation ID"] = imported.loc[
+                missing_id_mask
+            ].apply(build_annotation_id, axis=1)
+
+    # Add missing annotation columns with safe defaults.
+    defaults = {
+        "Reading Status": "Unread",
+        "Paper Type": "",
+        "Priority": "Medium",
+        "Research Tags": "",
+        "Citation Candidate": False,
+        "Important": False,
+        "Notes": "",
+    }
+
+    for col, default_value in defaults.items():
+        if col not in imported.columns:
+            imported[col] = default_value
+
+    # Normalize dropdown values so Streamlit selectbox columns do not fail.
+    imported["Reading Status"] = imported["Reading Status"].fillna("Unread").astype(str)
+    imported.loc[~imported["Reading Status"].isin(READING_STATUS_OPTIONS), "Reading Status"] = "Unread"
+
+    imported["Priority"] = imported["Priority"].fillna("Medium").astype(str)
+    imported.loc[~imported["Priority"].isin(PRIORITY_OPTIONS), "Priority"] = "Medium"
+
+    imported["Paper Type"] = imported["Paper Type"].fillna("").astype(str)
+    imported.loc[~imported["Paper Type"].isin(PAPER_TYPE_OPTIONS), "Paper Type"] = ""
+
+    imported["Research Tags"] = imported["Research Tags"].fillna("").astype(str)
+    imported["Notes"] = imported["Notes"].fillna("").astype(str)
+
+    imported["Citation Candidate"] = imported["Citation Candidate"].apply(parse_bool_for_annotation)
+    imported["Important"] = imported["Important"].apply(parse_bool_for_annotation)
+
+    return imported
+
+
+def import_annotations_into_store(imported_df: pd.DataFrame, overwrite_existing: bool = True) -> dict:
+    """
+    Restore annotations from an imported annotated CSV/XLSX into session state.
+
+    Returns a small summary dictionary for the UI.
+    """
+    initialize_annotation_store()
+
+    prepared = prepare_imported_annotations(imported_df)
+    store = st.session_state["research_library_annotations"]
+
+    imported_count = 0
+    skipped_count = 0
+
+    for _, row in prepared.iterrows():
+        annotation_id = str(row.get("Annotation ID", "")).strip()
+
+        if not annotation_id:
+            skipped_count += 1
+            continue
+
+        if annotation_id in store and not overwrite_existing:
+            skipped_count += 1
+            continue
+
+        store[annotation_id] = {
+            col: row.get(col, "")
+            for col in ANNOTATION_COLUMNS
+            if col in prepared.columns
+        }
+
+        imported_count += 1
+
+    st.session_state["research_library_annotations"] = store
+
+    return {
+        "imported": imported_count,
+        "skipped": skipped_count,
+        "total_rows": len(prepared),
+    }
+
+
+def clear_annotation_store() -> None:
+    """
+    Clear all current session annotations.
+    """
+    st.session_state["research_library_annotations"] = {}
 
 
 
@@ -3052,11 +3393,12 @@ with library_tab:
 
     st.markdown(
         """
-        Upload a `.bib` file and turn your references into a searchable research library.
+        Upload a `.bib` file and turn your references into a searchable and editable research library.
 
-        **Version 2.0B** adds optional journal ranking matching using **AJG 2024** and **FT50**.
+        **Version 2.0D** adds import/restore support on top of the Version 2.0C annotation workflow:
+        upload yesterday's annotated CSV, restore reading status, paper type, priority, tags, citation-candidate flags, importance flags, and notes.
 
-        Ranking data is not required:
+        Ranking data is optional:
         - If a private full ranking file exists, BibFlow loads it automatically.
         - If no private file exists, BibFlow can use a small demo ranking file.
         - Users can also upload their own ranking file in the advanced section.
@@ -3065,7 +3407,8 @@ with library_tab:
 
     st.info(
         "For public deployment, the full ranking file should stay private. "
-        "Keep it in `data/private/` and exclude this folder from GitHub."
+        "Keep it in `data/private/` and exclude this folder from GitHub. "
+        "Annotations can be restored from a previously downloaded annotated CSV, and you can download a new annotated CSV after editing."
     )
 
     st.markdown("### 1. Upload BibTeX Library")
@@ -3100,12 +3443,72 @@ with library_tab:
             library_rows = bibtex_entries_to_library_rows(library_entries)
             library_df = pd.DataFrame(library_rows)
 
-            st.markdown("### 2. Optional Journal Ranking Match")
+            st.markdown("### 2. Optional: Restore Previous Annotations")
+
+            st.markdown(
+                """
+                If you previously downloaded an annotated research library CSV from BibFlow,
+                upload it here to continue editing your reading status, tags, priority, citation flags, and notes.
+                """
+            )
+
+            restore_col1, restore_col2 = st.columns([2, 1])
+
+            with restore_col1:
+                annotated_library_file = st.file_uploader(
+                    "Upload previously exported annotated library CSV/XLSX",
+                    type=["csv", "xlsx", "xls"],
+                    key="restore_annotated_library_file"
+                )
+
+            with restore_col2:
+                overwrite_restored_annotations = st.checkbox(
+                    "Overwrite current session annotations",
+                    value=True,
+                    key="overwrite_restored_annotations"
+                )
+
+                clear_current_annotations = st.button(
+                    "Clear session annotations",
+                    key="clear_current_annotations_button"
+                )
+
+            if clear_current_annotations:
+                clear_annotation_store()
+                st.success("Current session annotations have been cleared.")
+
+            restored_annotation_summary = None
+
+            if annotated_library_file is not None:
+                try:
+                    raw_annotated_df = load_annotated_library_file(annotated_library_file)
+                    restored_annotation_summary = import_annotations_into_store(
+                        raw_annotated_df,
+                        overwrite_existing=overwrite_restored_annotations,
+                    )
+
+                    st.success(
+                        f"Restored {restored_annotation_summary['imported']} annotation row(s) "
+                        f"from {restored_annotation_summary['total_rows']} uploaded row(s). "
+                        f"Skipped {restored_annotation_summary['skipped']} row(s)."
+                    )
+
+                    with st.expander("Preview restored annotation file", expanded=False):
+                        st.dataframe(
+                            prepare_imported_annotations(raw_annotated_df).head(30),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+
+                except Exception as e:
+                    st.error(f"Failed to restore annotations: {e}")
+
+            st.markdown("### 3. Optional Journal Ranking Match")
 
             st.markdown(
                 """
                 Journal ranking data is optional.  
-                BibFlow can still build your research library even when no ranking file is available.
+                BibFlow can still build your editable research library even when no ranking file is available.
                 """
             )
 
@@ -3234,8 +3637,13 @@ with library_tab:
                     enable_fuzzy_matching=enable_fuzzy_matching,
                 )
 
+            # Version 2.0D: add editable annotation columns and apply restored/current session annotations.
+            library_df = add_annotation_columns(library_df)
+            library_df = apply_annotation_store(library_df)
+
             summary = summarize_research_library(library_df)
             ranking_summary = summarize_ranking_matches(library_df)
+            annotation_summary = summarize_annotations(library_df)
 
             st.markdown("### Library Summary")
 
@@ -3314,13 +3722,32 @@ with library_tab:
                             hide_index=True,
                         )
 
+            st.markdown("### Research Progress Summary")
+
+            ann_col1, ann_col2, ann_col3, ann_col4, ann_col5 = st.columns(5)
+
+            with ann_col1:
+                st.metric("Read", annotation_summary["read"])
+
+            with ann_col2:
+                st.metric("Reading", annotation_summary["reading"])
+
+            with ann_col3:
+                st.metric("Important", annotation_summary["important"])
+
+            with ann_col4:
+                st.metric("Citation Candidates", annotation_summary["citation_candidates"])
+
+            with ann_col5:
+                st.metric("Core Papers", annotation_summary["core_papers"])
+
             st.divider()
 
             st.markdown("### Search and Filter")
 
             search_text = st.text_input(
                 "Search references",
-                placeholder="Search by title, author, journal, DOI, ISSN, AJG field, or citation key",
+                placeholder="Search by title, author, journal, DOI, ISSN, AJG field, tags, notes, or citation key",
                 key="library_search_text"
             )
 
@@ -3431,6 +3858,45 @@ with library_tab:
                     key="only_ft50_filter"
                 )
 
+            annotation_filter_col1, annotation_filter_col2, annotation_filter_col3 = st.columns(3)
+
+            with annotation_filter_col1:
+                selected_reading_status = st.multiselect(
+                    "Filter by reading status",
+                    options=READING_STATUS_OPTIONS,
+                    key="library_reading_status_filter"
+                )
+
+            with annotation_filter_col2:
+                selected_priorities = st.multiselect(
+                    "Filter by priority",
+                    options=PRIORITY_OPTIONS,
+                    key="library_priority_filter"
+                )
+
+            with annotation_filter_col3:
+                selected_paper_types = st.multiselect(
+                    "Filter by paper type",
+                    options=[x for x in PAPER_TYPE_OPTIONS if x],
+                    key="library_paper_type_filter"
+                )
+
+            annotation_flag_col1, annotation_flag_col2 = st.columns(2)
+
+            with annotation_flag_col1:
+                only_citation_candidates = st.checkbox(
+                    "Show only citation candidates",
+                    value=False,
+                    key="only_citation_candidates_filter"
+                )
+
+            with annotation_flag_col2:
+                only_important = st.checkbox(
+                    "Show only important papers",
+                    value=False,
+                    key="only_important_filter"
+                )
+
             filtered_library_df = filter_library_dataframe(
                 df=library_df,
                 search_text=search_text,
@@ -3442,6 +3908,11 @@ with library_tab:
                 selected_match_status=selected_match_status,
                 only_ajg_3_plus=only_ajg_3_plus,
                 only_ft50=only_ft50,
+                selected_reading_status=selected_reading_status,
+                selected_priorities=selected_priorities,
+                selected_paper_types=selected_paper_types,
+                only_citation_candidates=only_citation_candidates,
+                only_important=only_important,
             )
 
             display_columns = [
@@ -3450,17 +3921,27 @@ with library_tab:
                 "Authors",
                 "Year",
                 "Journal / Venue",
-                "DOI",
-                "ISSN",
                 "AJG Rating",
                 "AJG Field",
                 "AJG Source Year",
                 "FT50",
+                "Reading Status",
+                "Paper Type",
+                "Priority",
+                "Research Tags",
+                "Citation Candidate",
+                "Important",
+                "Notes",
+                "DOI",
+                "ISSN",
                 "Matched Journal",
                 "Ranking Match Status",
                 "Match Method",
                 "Match Score",
+                "Ranking Source",
+                "Ranking Match Note",
                 "Entry Type",
+                "Annotation ID",
             ]
 
             display_columns = [
@@ -3468,17 +3949,62 @@ with library_tab:
                 if col in filtered_library_df.columns
             ]
 
-            st.markdown("### Library Table")
+            st.markdown("### Editable Research Library Table")
 
             st.caption(
-                f"Showing {len(filtered_library_df)} of {len(library_df)} references."
+                f"Showing {len(filtered_library_df)} of {len(library_df)} references. "
+                "You can edit reading status, paper type, priority, tags, citation flags, importance, and notes directly in the table."
             )
 
-            st.dataframe(
+            disabled_columns = [
+                col for col in display_columns
+                if col not in ANNOTATION_COLUMNS
+            ]
+
+            edited_library_df = st.data_editor(
                 filtered_library_df[display_columns],
                 use_container_width=True,
                 hide_index=True,
+                disabled=disabled_columns,
+                column_config={
+                    "Reading Status": st.column_config.SelectboxColumn(
+                        "Reading Status",
+                        options=READING_STATUS_OPTIONS,
+                        required=True,
+                    ),
+                    "Paper Type": st.column_config.SelectboxColumn(
+                        "Paper Type",
+                        options=PAPER_TYPE_OPTIONS,
+                    ),
+                    "Priority": st.column_config.SelectboxColumn(
+                        "Priority",
+                        options=PRIORITY_OPTIONS,
+                        required=True,
+                    ),
+                    "Research Tags": st.column_config.TextColumn(
+                        "Research Tags",
+                        help="Use comma-separated tags, e.g. option-implied density, VaR, GEV, tail risk",
+                    ),
+                    "Citation Candidate": st.column_config.CheckboxColumn(
+                        "Citation Candidate",
+                        help="Mark papers you may cite in your thesis or paper.",
+                    ),
+                    "Important": st.column_config.CheckboxColumn(
+                        "Important",
+                        help="Mark especially important papers.",
+                    ),
+                    "Notes": st.column_config.TextColumn(
+                        "Notes",
+                        help="Add short reading notes or literature review comments.",
+                    ),
+                    "Annotation ID": None,
+                },
+                key="research_library_annotation_editor",
             )
+
+            update_annotation_store(edited_library_df)
+            library_df = apply_annotation_store(library_df)
+            filtered_library_df = apply_annotation_store(filtered_library_df)
 
             st.divider()
 
@@ -3487,21 +4013,51 @@ with library_tab:
             csv_data = filtered_library_df.to_csv(index=False).encode("utf-8")
 
             st.download_button(
-                label="Download filtered enriched research library as CSV",
+                label="Download filtered annotated research library as CSV",
                 data=csv_data,
-                file_name="bibflow_enriched_research_library_filtered.csv",
+                file_name="bibflow_annotated_research_library_filtered.csv",
                 mime="text/csv",
-                key="download_enriched_research_library_csv"
+                key="download_annotated_research_library_csv"
             )
 
             full_csv_data = library_df.to_csv(index=False).encode("utf-8")
 
             st.download_button(
-                label="Download full enriched research library as CSV",
+                label="Download full annotated research library as CSV",
                 data=full_csv_data,
-                file_name="bibflow_enriched_research_library_full.csv",
+                file_name="bibflow_annotated_research_library_full.csv",
                 mime="text/csv",
-                key="download_full_enriched_research_library_csv"
+                key="download_full_annotated_research_library_csv"
+            )
+
+            annotation_export_columns = [
+                "Annotation ID",
+                "Citation Key",
+                "Title",
+                "Year",
+                "Journal / Venue",
+                "Reading Status",
+                "Paper Type",
+                "Priority",
+                "Research Tags",
+                "Citation Candidate",
+                "Important",
+                "Notes",
+            ]
+
+            annotation_export_columns = [
+                col for col in annotation_export_columns
+                if col in library_df.columns
+            ]
+
+            annotations_only_csv = library_df[annotation_export_columns].to_csv(index=False).encode("utf-8")
+
+            st.download_button(
+                label="Download annotations-only CSV for restore/import",
+                data=annotations_only_csv,
+                file_name="bibflow_annotations_only.csv",
+                mime="text/csv",
+                key="download_annotations_only_csv"
             )
 
             unmatched_df = library_df[
@@ -3526,6 +4082,8 @@ with library_tab:
                 - AJG ranks **journals**, not individual papers.
                 - The correct interpretation is: *this paper is published in an AJG 3 journal*.
                 - FT50 also identifies journals, not paper quality directly.
+                - Reading status, tags, priority, citation flags, importance flags, and notes can now be restored from a previously downloaded annotated CSV.
+                - To continue your work later, download the annotated CSV and upload it again in the restore section.
                 - Fuzzy matches should be manually checked, especially when the match score is below 1.00.
                 - Keep the full ranking file private unless redistribution is clearly allowed.
                 """
