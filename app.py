@@ -392,6 +392,177 @@ def build_merged_bib(existing_bib_content: str, new_bibtex: str) -> str:
     return new_clean
 
 
+def parse_bibtex_entries(raw_bibtex: str) -> list:
+    """
+    Parse raw BibTeX text and return all entries.
+    """
+    if not raw_bibtex.strip():
+        return []
+
+    parser = bibtexparser.bparser.BibTexParser(common_strings=True)
+    database = bibtexparser.loads(raw_bibtex, parser=parser)
+
+    return database.entries
+
+
+def protect_title_capitalization(title: str) -> str:
+    """
+    Protect title capitalization for BibTeX by wrapping important capitalized words in braces.
+
+    This is a light-touch cleaner. It avoids changing the whole title too aggressively.
+    """
+    if not title:
+        return title
+
+    # If the title already has braces, keep it as it is.
+    if "{" in title or "}" in title:
+        return title
+
+    protected_words = []
+
+    for word in title.split():
+        clean_word = re.sub(r"[^A-Za-z0-9]", "", word)
+
+        # Protect likely acronyms or important capitalized terms.
+        if clean_word.isupper() and len(clean_word) > 1:
+            protected_words.append(word.replace(clean_word, "{" + clean_word + "}"))
+        else:
+            protected_words.append(word)
+
+    return " ".join(protected_words)
+
+
+def clean_bibtex_entry(
+    entry: dict,
+    used_keys: set,
+    regenerate_key: bool = True,
+    protect_titles: bool = True,
+    remove_extra_fields: bool = True,
+) -> dict:
+    """
+    Clean a single BibTeX entry.
+    """
+    cleaned = dict(entry)
+
+    # Normalize DOI
+    if "doi" in cleaned:
+        cleaned["doi"] = normalize_doi(cleaned["doi"])
+
+    # Clean title
+    if "title" in cleaned:
+        cleaned["title"] = clean_text(cleaned["title"])
+        if protect_titles:
+            cleaned["title"] = protect_title_capitalization(cleaned["title"])
+
+    # Clean journal / booktitle / publisher fields
+    for field in ["journal", "journaltitle", "booktitle", "publisher"]:
+        if field in cleaned:
+            cleaned[field] = clean_text(cleaned[field])
+
+    # Clean author field lightly
+    if "author" in cleaned:
+        cleaned["author"] = re.sub(r"\s+", " ", cleaned["author"]).strip()
+
+    # Remove noisy fields that are often not needed in Overleaf papers
+    if remove_extra_fields:
+        fields_to_remove = {
+            "abstract",
+            "file",
+            "keywords",
+            "mendeley-groups",
+            "timestamp",
+            "urldate",
+            "language",
+            "langid",
+            "annotation",
+        }
+
+        for field in fields_to_remove:
+            cleaned.pop(field, None)
+
+    # Generate or validate citation key
+    old_key = cleaned.get("ID", "")
+
+    if regenerate_key or not old_key:
+        base_key = generate_citation_key(cleaned)
+    else:
+        base_key = re.sub(r"[^A-Za-z0-9_:-]", "", old_key)
+
+    final_key = make_unique_key(base_key, used_keys)
+    cleaned["ID"] = final_key
+    used_keys.add(final_key)
+
+    return cleaned
+
+
+def clean_bibtex_entries(
+    entries: list,
+    existing_dois: set,
+    existing_keys: set,
+    skip_existing_doi: bool = True,
+    regenerate_key: bool = True,
+    protect_titles: bool = True,
+    remove_extra_fields: bool = True,
+):
+    """
+    Clean multiple BibTeX entries and return cleaned entries + summary rows.
+    """
+    cleaned_entries = []
+    result_rows = []
+    used_keys = set(existing_keys)
+
+    skipped_count = 0
+
+    for entry in entries:
+        original_key = entry.get("ID", "")
+        raw_doi = normalize_doi(entry.get("doi", "")).lower()
+
+        if raw_doi and skip_existing_doi and raw_doi in existing_dois:
+            skipped_count += 1
+
+            result_rows.append(
+                {
+                    "Original Key": original_key,
+                    "New Key": "",
+                    "DOI": raw_doi,
+                    "Action": "Skipped",
+                    "Status": "Skipped because DOI already exists in uploaded .bib",
+                }
+            )
+            continue
+
+        cleaned = clean_bibtex_entry(
+            entry=entry,
+            used_keys=used_keys,
+            regenerate_key=regenerate_key,
+            protect_titles=protect_titles,
+            remove_extra_fields=remove_extra_fields,
+        )
+
+        cleaned_entries.append(cleaned)
+
+        new_key = cleaned.get("ID", "")
+        cleaned_doi = normalize_doi(cleaned.get("doi", "")).lower()
+
+        if original_key and original_key != new_key:
+            action = "Cleaned with renamed key"
+        else:
+            action = "Cleaned"
+
+        result_rows.append(
+            {
+                "Original Key": original_key,
+                "New Key": new_key,
+                "DOI": cleaned_doi,
+                "Action": action,
+                "Status": "Cleaned successfully",
+            }
+        )
+
+    return cleaned_entries, result_rows, skipped_count
+
+
+
 # ============================================================
 # Session state
 # ============================================================
@@ -463,8 +634,9 @@ st.sidebar.caption("BibFlow Version 1.3")
 # Tabs
 # ============================================================
 
-single_tab, batch_tab, title_tab = st.tabs(
-    ["Single DOI", "Batch DOI + Clean Merge", "Title Search"]
+
+single_tab, batch_tab, title_tab, cleaner_tab = st.tabs(
+    ["Single DOI", "Batch DOI + Clean Merge", "Title Search", "BibTeX Cleaner"]
 )
 
 
@@ -983,3 +1155,169 @@ with title_tab:
                     mime="text/plain",
                     key="title_merged_download_button"
                 )
+
+
+# ============================================================
+# BibTeX Cleaner workflow
+# ============================================================
+
+with cleaner_tab:
+
+    st.markdown("## BibTeX Cleaner & Validator")
+
+    st.markdown(
+        """
+        Use this mode when you already have raw BibTeX from Google Scholar, Zotero,
+        SSRN, arXiv, a journal page, or another reference manager.
+
+        BibFlow can clean the entries, regenerate citation keys, check duplicate DOI records,
+        and optionally merge the cleaned entries into your uploaded Overleaf `references.bib`.
+        """
+    )
+
+    cleaner_col1, cleaner_col2, cleaner_col3 = st.columns(3)
+
+    with cleaner_col1:
+        cleaner_regenerate_key = st.checkbox(
+            "Regenerate citation keys",
+            value=True,
+            key="cleaner_regenerate_key"
+        )
+
+    with cleaner_col2:
+        cleaner_protect_titles = st.checkbox(
+            "Protect title acronyms",
+            value=True,
+            key="cleaner_protect_titles"
+        )
+
+    with cleaner_col3:
+        cleaner_remove_extra_fields = st.checkbox(
+            "Remove noisy extra fields",
+            value=True,
+            key="cleaner_remove_extra_fields"
+        )
+
+    st.markdown("### Input raw BibTeX")
+
+    raw_bibtex_text = st.text_area(
+        "Paste raw BibTeX here",
+        height=260,
+        placeholder="""@article{example,
+  title={Example Paper Title},
+  author={Smith, John and Doe, Jane},
+  journal={Journal of Example Studies},
+  year={2024},
+  doi={10.xxxx/example}
+}""",
+        key="cleaner_raw_bibtex_text"
+    )
+
+    raw_bibtex_file = st.file_uploader(
+        "Or upload a raw .bib file to clean",
+        type=["bib"],
+        key="cleaner_raw_bibtex_file"
+    )
+
+    clean_button = st.button(
+        "Clean BibTeX",
+        type="primary",
+        key="cleaner_clean_button"
+    )
+
+    if clean_button:
+
+        file_content = ""
+
+        if raw_bibtex_file is not None:
+            file_content = raw_bibtex_file.getvalue().decode("utf-8", errors="ignore")
+
+        combined_raw_bibtex = ""
+
+        if raw_bibtex_text.strip():
+            combined_raw_bibtex += raw_bibtex_text.strip()
+
+        if file_content.strip():
+            if combined_raw_bibtex:
+                combined_raw_bibtex += "\n\n"
+            combined_raw_bibtex += file_content.strip()
+
+        if not combined_raw_bibtex.strip():
+            st.warning("Please paste raw BibTeX or upload a .bib file.")
+            st.stop()
+
+        try:
+            raw_entries = parse_bibtex_entries(combined_raw_bibtex)
+        except Exception as e:
+            st.error(f"Failed to parse BibTeX: {e}")
+            st.stop()
+
+        if not raw_entries:
+            st.warning("No BibTeX entries were found.")
+            st.stop()
+
+        cleaned_entries, cleaner_rows, cleaner_skipped_count = clean_bibtex_entries(
+            entries=raw_entries,
+            existing_dois=existing_dois,
+            existing_keys=existing_keys,
+            skip_existing_doi=skip_existing_doi,
+            regenerate_key=cleaner_regenerate_key,
+            protect_titles=cleaner_protect_titles,
+            remove_extra_fields=cleaner_remove_extra_fields,
+        )
+
+        st.divider()
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            st.metric("Raw entries", len(raw_entries))
+
+        with col2:
+            st.metric("Cleaned entries", len(cleaned_entries))
+
+        with col3:
+            st.metric("Skipped duplicates", cleaner_skipped_count)
+
+        st.markdown("### Cleaning Summary")
+        st.dataframe(cleaner_rows, use_container_width=True)
+
+        if cleaned_entries:
+
+            cleaned_bibtex = entries_to_bibtex(cleaned_entries)
+
+            st.markdown("### Cleaned BibTeX")
+            st.code(cleaned_bibtex, language="bibtex")
+
+            st.download_button(
+                label="Download cleaned BibTeX",
+                data=cleaned_bibtex,
+                file_name="bibflow_cleaned_references.bib",
+                mime="text/plain",
+                key="cleaner_download_cleaned_button"
+            )
+
+            if uploaded_bib is not None:
+                merged_cleaned_bibtex = build_merged_bib(
+                    existing_bib_content,
+                    cleaned_bibtex
+                )
+
+                st.markdown("### Clean Merged BibTeX")
+                st.caption(
+                    "Your uploaded .bib content is preserved. Cleaned non-duplicate entries are appended."
+                )
+                st.code(merged_cleaned_bibtex, language="bibtex")
+
+                st.download_button(
+                    label="Download merged cleaned .bib file",
+                    data=merged_cleaned_bibtex,
+                    file_name="merged_references.bib",
+                    mime="text/plain",
+                    key="cleaner_download_merged_button"
+                )
+            else:
+                st.info("Upload an existing references.bib file in the sidebar to enable clean merge output.")
+
+        else:
+            st.warning("No cleaned entries were generated. They may all be duplicates or invalid entries.")
