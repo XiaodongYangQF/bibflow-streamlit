@@ -99,3 +99,55 @@ New features:
 - Skip duplicated DOI entries against uploaded `references.bib`
 - Download cleaned BibTeX
 - Merge cleaned entries into an existing Overleaf `.bib` file
+
+
+
+# BibFlow
+
+**BibFlow** is a lightweight Streamlit research workflow assistant for researchers who use **Zotero**, **BibTeX**, and **Overleaf**.
+
+It helps users generate, clean, deduplicate, merge, and export Overleaf-ready BibTeX entries from DOI metadata, title search, batch DOI input, or raw BibTeX.
+
+## Motivation
+
+Many researchers manage papers in Zotero but write manuscripts in Overleaf. Moving references into an Overleaf `.bib` file can become repetitive and error-prone, especially when citation keys are inconsistent, duplicate references appear, or BibTeX entries from Google Scholar contain noisy fields.
+
+BibFlow aims to simplify this workflow.
+
+## Current Version
+
+### Version 1.5 — UI and Project Polish
+
+Version 1.5 improves the app interface and project presentation.
+
+Main improvements:
+
+- Cleaner Streamlit interface
+- Branded app header
+- Feature cards
+- More readable sidebar
+- Professional tab names
+- App footer
+- Streamlit theme configuration
+- Improved GitHub/portfolio readiness
+
+## Core Features
+
+- DOI to BibTeX generation
+- Batch DOI processing
+- Clean merge with an existing `references.bib`
+- Title search when DOI is unknown
+- Raw BibTeX cleaning and validation
+- Duplicate DOI checking
+- Citation key regeneration
+- Cleaned and merged `.bib` downloads
+
+## Research Workflow
+
+```text
+Zotero / DOI / paper title / raw BibTeX
+→ BibFlow
+→ clean Overleaf-ready references.bib
+→ LaTeX writing
+
+

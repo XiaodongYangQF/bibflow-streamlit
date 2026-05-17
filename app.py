@@ -18,6 +18,202 @@ st.set_page_config(
 
 
 # ============================================================
+# App branding and UI helpers
+# ============================================================
+
+APP_VERSION = "1.5"
+APP_NAME = "BibFlow"
+APP_TAGLINE = "A Streamlit Assistant for Zotero–Overleaf BibTeX Workflows"
+
+
+def apply_custom_css():
+    """
+    Light custom styling for a cleaner portfolio/product look.
+    """
+    st.markdown(
+        """
+        <style>
+        .bibflow-hero {
+            padding: 1.6rem 1.8rem;
+            border-radius: 1.2rem;
+            background: linear-gradient(135deg, #F8FAFC 0%, #EEF2FF 100%);
+            border: 1px solid #E2E8F0;
+            margin-bottom: 1.2rem;
+        }
+
+        .bibflow-title {
+            font-size: 2.35rem;
+            font-weight: 800;
+            color: #0F172A;
+            margin-bottom: 0.25rem;
+        }
+
+        .bibflow-subtitle {
+            font-size: 1.05rem;
+            color: #475569;
+            margin-bottom: 0.85rem;
+        }
+
+        .bibflow-badge {
+            display: inline-block;
+            padding: 0.28rem 0.7rem;
+            border-radius: 999px;
+            background-color: #DBEAFE;
+            color: #1D4ED8;
+            font-size: 0.85rem;
+            font-weight: 700;
+            margin-right: 0.4rem;
+            margin-top: 0.25rem;
+        }
+
+        .feature-card {
+            padding: 1rem;
+            border-radius: 1rem;
+            border: 1px solid #E2E8F0;
+            background-color: #FFFFFF;
+            min-height: 120px;
+            box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+        }
+
+        .feature-card-title {
+            font-weight: 750;
+            color: #0F172A;
+            margin-bottom: 0.3rem;
+        }
+
+        .feature-card-text {
+            color: #475569;
+            font-size: 0.92rem;
+            line-height: 1.45;
+        }
+
+        .small-muted {
+            color: #64748B;
+            font-size: 0.9rem;
+        }
+
+        .bibflow-footer {
+            margin-top: 2rem;
+            padding-top: 1rem;
+            border-top: 1px solid #E2E8F0;
+            color: #64748B;
+            font-size: 0.88rem;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
+
+def render_header():
+    """
+    Render the polished app header.
+    """
+    st.markdown(
+        f"""
+        <div class="bibflow-hero">
+            <div class="bibflow-title">📚 {APP_NAME}</div>
+            <div class="bibflow-subtitle">{APP_TAGLINE}</div>
+            <span class="bibflow-badge">Version {APP_VERSION}</span>
+            <span class="bibflow-badge">Research Workflow Tool</span>
+            <span class="bibflow-badge">Overleaf-ready BibTeX</span>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        st.markdown(
+            """
+            <div class="feature-card">
+                <div class="feature-card-title">DOI → BibTeX</div>
+                <div class="feature-card-text">
+                    Generate clean BibTeX entries directly from DOI metadata.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    with col2:
+        st.markdown(
+            """
+            <div class="feature-card">
+                <div class="feature-card-title">Batch Processing</div>
+                <div class="feature-card-text">
+                    Paste multiple DOIs and export a combined references file.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    with col3:
+        st.markdown(
+            """
+            <div class="feature-card">
+                <div class="feature-card-title">Clean Merge</div>
+                <div class="feature-card-text">
+                    Upload your current Overleaf .bib file and append only new entries.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    with col4:
+        st.markdown(
+            """
+            <div class="feature-card">
+                <div class="feature-card-title">BibTeX Cleaner</div>
+                <div class="feature-card-text">
+                    Clean raw BibTeX, regenerate keys, and remove noisy fields.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    with st.expander("How BibFlow fits into the research workflow", expanded=False):
+        st.markdown(
+            """
+            BibFlow is designed for researchers who use **Zotero**, **BibTeX**, and **Overleaf**.
+
+            Typical workflow:
+
+            ```text
+            Zotero / DOI / paper title / raw BibTeX
+            → BibFlow
+            → clean Overleaf-ready references.bib
+            → LaTeX writing
+            ```
+
+            It helps reduce repetitive manual work such as copying BibTeX from Google Scholar,
+            fixing citation keys, removing noisy fields, and checking duplicate references.
+            """
+        )
+
+
+def render_footer():
+    """
+    Render app footer.
+    """
+    st.markdown(
+        f"""
+        <div class="bibflow-footer">
+            <strong>{APP_NAME}</strong> Version {APP_VERSION} · Built with Streamlit ·
+            Designed as a lightweight research workflow assistant for LaTeX and Overleaf users.
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+
+
+
+# ============================================================
 # Helper functions
 # ============================================================
 
@@ -597,10 +793,29 @@ st.divider()
 
 
 # ============================================================
+# Custom UI
+# ============================================================
+
+apply_custom_css()
+render_header()
+st.divider()
+
+
+# ============================================================
 # Sidebar
 # ============================================================
 
 st.sidebar.title("Settings")
+
+
+st.sidebar.markdown(
+    """
+    Use the sidebar to upload your existing Overleaf `references.bib`
+    and control duplicate-handling behaviour.
+    """
+)
+
+
 
 allow_manual_key = st.sidebar.checkbox(
     "Allow manual citation key editing in Single DOI / Title Search mode",
@@ -627,7 +842,7 @@ if uploaded_bib is not None:
     )
 
 st.sidebar.markdown("---")
-st.sidebar.caption("BibFlow Version 1.3")
+st.sidebar.caption(f"BibFlow Version {APP_VERSION}")
 
 
 # ============================================================
@@ -635,8 +850,14 @@ st.sidebar.caption("BibFlow Version 1.3")
 # ============================================================
 
 
+
 single_tab, batch_tab, title_tab, cleaner_tab = st.tabs(
-    ["Single DOI", "Batch DOI + Clean Merge", "Title Search", "BibTeX Cleaner"]
+    [
+        "🔎 Single DOI",
+        "📦 Batch + Merge",
+        "📝 Title Search",
+        "🧹 BibTeX Cleaner",
+    ]
 )
 
 
@@ -1321,3 +1542,7 @@ with cleaner_tab:
 
         else:
             st.warning("No cleaned entries were generated. They may all be duplicates or invalid entries.")
+
+
+
+render_footer()
