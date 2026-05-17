@@ -21,7 +21,7 @@ st.set_page_config(
 # App branding and UI helpers
 # ============================================================
 
-APP_VERSION = "1.6"
+APP_VERSION = "1.7"
 APP_NAME = "BibFlow"
 APP_TAGLINE = "A Streamlit Assistant for Zotero–Overleaf BibTeX Workflows"
 
@@ -59,6 +59,37 @@ EXPORT_PRESETS = {
         "keep_fields": set(),
         "keep_all_fields": True,
     },
+}
+
+# Add citation key style presets
+
+CITATION_KEY_STYLES = {
+    "AuthorYearKeyword": {
+        "description": "Default style. Example: Bollerslev2009Variance"
+    },
+    "AuthorYear": {
+        "description": "Short and clean. Example: Bollerslev2009"
+    },
+    "AuthorYearJournal": {
+        "description": "Useful when venue matters. Example: Bollerslev2009RFS"
+    },
+    "AuthorYearShortTitle": {
+        "description": "More descriptive key. Example: Bollerslev2009VarianceRisk"
+    },
+}
+
+
+JOURNAL_ABBREVIATIONS = {
+    "review of financial studies": "RFS",
+    "journal of finance": "JF",
+    "journal of financial economics": "JFE",
+    "journal of financial and quantitative analysis": "JFQA",
+    "management science": "MS",
+    "econometrica": "ECMA",
+    "american economic review": "AER",
+    "quarterly journal of economics": "QJE",
+    "journal of political economy": "JPE",
+    "journal of econometrics": "JE",
 }
 
 
@@ -226,9 +257,9 @@ def render_header():
         st.markdown(
             """
             <div class="feature-card">
-                <div class="feature-card-title">BibTeX Cleaner</div>
+                <div class="feature-card-title">Cleaner + Quality Report</div>
                 <div class="feature-card-text">
-                    Clean raw BibTeX, regenerate keys, and remove noisy fields.
+                    Clean raw BibTeX and check whether your references file is Overleaf-ready.
                 </div>
             </div>
             """,
@@ -494,16 +525,92 @@ def extract_title_keyword(title: str) -> str:
     return "Paper"
 
 
-def generate_citation_key(entry: dict) -> str:
+def extract_title_keywords(title: str, n_words: int = 2) -> str:
     """
-    Generate citation key:
-    LastnameYearKeyword
+    Extract multiple meaningful title keywords.
+    """
+    stopwords = {
+        "a", "an", "the", "and", "or", "of", "in", "on", "for",
+        "to", "with", "by", "from", "using", "based", "evidence",
+        "new", "some", "towards", "toward", "into", "across",
+        "through", "between", "among", "over", "under", "its",
+        "their", "our", "your", "this", "that", "are", "is",
+        "be", "as", "at", "we"
+    }
 
-    Example:
-    Carr2009Variance
+    title = clean_text(title)
+    words = re.findall(r"[A-Za-z0-9]+", title)
+
+    keywords = []
+
+    for word in words:
+        word_lower = word.lower()
+
+        if word_lower not in stopwords and len(word_lower) > 2:
+            keywords.append(word.capitalize())
+
+        if len(keywords) >= n_words:
+            break
+
+    if not keywords:
+        return "Paper"
+
+    return "".join(keywords)
+
+
+def extract_journal_abbreviation(entry: dict) -> str:
+    """
+    Extract a short journal abbreviation for citation keys.
+    """
+    journal = (
+        entry.get("journal")
+        or entry.get("journaltitle")
+        or entry.get("container-title")
+        or entry.get("booktitle")
+        or ""
+    )
+
+    journal_clean = clean_text(journal).lower()
+
+    if journal_clean in JOURNAL_ABBREVIATIONS:
+        return JOURNAL_ABBREVIATIONS[journal_clean]
+
+    words = re.findall(r"[A-Za-z]+", journal)
+
+    if not words:
+        return "Venue"
+
+    # Use first letters from important words.
+    stopwords = {"of", "the", "and", "in", "for"}
+
+    initials = [
+        word[0].upper()
+        for word in words
+        if word.lower() not in stopwords
+    ]
+
+    abbreviation = "".join(initials[:4])
+
+    return abbreviation or "Venue"
+
+
+
+
+def generate_citation_key(
+    entry: dict,
+    citation_key_style: str = "AuthorYearKeyword"
+) -> str:
+    """
+    Generate citation key using selected style.
+
+    Supported styles:
+    - AuthorYearKeyword
+    - AuthorYear
+    - AuthorYearJournal
+    - AuthorYearShortTitle
     """
     author = entry.get("author", "")
-    year = entry.get("year", "")
+    year = entry.get("year", "") or entry.get("date", "")
     title = entry.get("title", "")
 
     last_name = extract_first_author_lastname(author)
@@ -511,9 +618,21 @@ def generate_citation_key(entry: dict) -> str:
     year_match = re.search(r"\d{4}", year)
     year_clean = year_match.group(0) if year_match else "YYYY"
 
-    keyword = extract_title_keyword(title)
+    if citation_key_style == "AuthorYear":
+        key = f"{last_name}{year_clean}"
 
-    key = f"{last_name}{year_clean}{keyword}"
+    elif citation_key_style == "AuthorYearJournal":
+        journal_abbrev = extract_journal_abbreviation(entry)
+        key = f"{last_name}{year_clean}{journal_abbrev}"
+
+    elif citation_key_style == "AuthorYearShortTitle":
+        short_title = extract_title_keywords(title, n_words=2)
+        key = f"{last_name}{year_clean}{short_title}"
+
+    else:
+        keyword = extract_title_keyword(title)
+        key = f"{last_name}{year_clean}{keyword}"
+
     key = re.sub(r"[^A-Za-z0-9_:-]", "", key)
 
     return key
@@ -782,6 +901,7 @@ def clean_bibtex_entry(
     regenerate_key: bool = True,
     protect_titles: bool = True,
     remove_extra_fields: bool = True,
+    citation_key_style: str = "AuthorYearKeyword",
 ) -> dict:
     """
     Clean a single BibTeX entry.
@@ -828,7 +948,7 @@ def clean_bibtex_entry(
     old_key = cleaned.get("ID", "")
 
     if regenerate_key or not old_key:
-        base_key = generate_citation_key(cleaned)
+        base_key = generate_citation_key(cleaned, citation_key_style=citation_key_style)
     else:
         base_key = re.sub(r"[^A-Za-z0-9_:-]", "", old_key)
 
@@ -847,6 +967,7 @@ def clean_bibtex_entries(
     regenerate_key: bool = True,
     protect_titles: bool = True,
     remove_extra_fields: bool = True,
+    citation_key_style: str = "AuthorYearKeyword",
 ):
     """
     Clean multiple BibTeX entries and return cleaned entries + summary rows.
@@ -881,6 +1002,7 @@ def clean_bibtex_entries(
             regenerate_key=regenerate_key,
             protect_titles=protect_titles,
             remove_extra_fields=remove_extra_fields,
+            citation_key_style=citation_key_style,
         )
 
         cleaned_entries.append(cleaned)
@@ -905,6 +1027,246 @@ def clean_bibtex_entries(
 
     return cleaned_entries, result_rows, skipped_count
 
+
+# ============================================================
+# Reference quality report helper functions
+# ============================================================
+
+def normalize_text_for_matching(text: str) -> str:
+    """
+    Normalize text for duplicate-title detection.
+    """
+    text = clean_text(text).lower()
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def is_weak_citation_key(key: str) -> bool:
+    """
+    Detect weak or uninformative citation keys.
+    """
+    if not key:
+        return True
+
+    key_clean = key.strip()
+    key_lower = key_clean.lower()
+
+    weak_prefixes = (
+        "key", "test", "paper", "article", "citation", "ref",
+        "unknown", "default", "sample", "example"
+    )
+
+    if key_lower.startswith(weak_prefixes):
+        return True
+
+    if len(key_clean) <= 4:
+        return True
+
+    # Examples: a, b, ref1, paper2, test3
+    if re.fullmatch(r"[A-Za-z]+\d?", key_clean) and not re.search(r"\d{4}", key_clean):
+        return True
+
+    return False
+
+
+def build_reference_quality_report(entries: list) -> list:
+    """
+    Build a quality report for BibTeX entries.
+    """
+    report_rows = []
+
+    key_counts = {}
+    doi_counts = {}
+    title_counts = {}
+
+    for entry in entries:
+        key = entry.get("ID", "")
+        doi = normalize_doi(entry.get("doi", "")).lower()
+        title_norm = normalize_text_for_matching(entry.get("title", ""))
+
+        if key:
+            key_counts[key] = key_counts.get(key, 0) + 1
+
+        if doi:
+            doi_counts[doi] = doi_counts.get(doi, 0) + 1
+
+        if title_norm:
+            title_counts[title_norm] = title_counts.get(title_norm, 0) + 1
+
+    for entry in entries:
+        key = entry.get("ID", "")
+        entry_type = entry.get("ENTRYTYPE", "").lower()
+        doi = normalize_doi(entry.get("doi", "")).lower()
+        title = clean_text(entry.get("title", ""))
+        title_norm = normalize_text_for_matching(title)
+
+        author = clean_text(entry.get("author", ""))
+        year = clean_text(entry.get("year", "") or entry.get("date", ""))
+        venue = clean_text(
+            entry.get("journal", "")
+            or entry.get("journaltitle", "")
+            or entry.get("booktitle", "")
+            or entry.get("publisher", "")
+        )
+
+        # Required field checks
+        if not key:
+            report_rows.append(
+                {
+                    "Citation Key": key,
+                    "Issue": "Missing citation key",
+                    "Severity": "High",
+                    "Suggestion": "Generate a stable citation key.",
+                }
+            )
+
+        if not author:
+            report_rows.append(
+                {
+                    "Citation Key": key,
+                    "Issue": "Missing author",
+                    "Severity": "High",
+                    "Suggestion": "Check the source metadata or edit the BibTeX entry manually.",
+                }
+            )
+
+        if not title:
+            report_rows.append(
+                {
+                    "Citation Key": key,
+                    "Issue": "Missing title",
+                    "Severity": "High",
+                    "Suggestion": "Add the paper title.",
+                }
+            )
+
+        if not year:
+            report_rows.append(
+                {
+                    "Citation Key": key,
+                    "Issue": "Missing year/date",
+                    "Severity": "Medium",
+                    "Suggestion": "Add the publication year or date.",
+                }
+            )
+
+        if entry_type in {"article", "inproceedings", "conference"} and not venue:
+            report_rows.append(
+                {
+                    "Citation Key": key,
+                    "Issue": "Missing journal/booktitle",
+                    "Severity": "Medium",
+                    "Suggestion": "Add the journal, conference, booktitle, or publisher field.",
+                }
+            )
+
+        if not doi and entry_type in {"article", "inproceedings", "conference"}:
+            report_rows.append(
+                {
+                    "Citation Key": key,
+                    "Issue": "Missing DOI",
+                    "Severity": "Medium",
+                    "Suggestion": "Add DOI if available. This helps duplicate detection and reference tracking.",
+                }
+            )
+
+        # Duplicate checks
+        if key and key_counts.get(key, 0) > 1:
+            report_rows.append(
+                {
+                    "Citation Key": key,
+                    "Issue": "Duplicate citation key",
+                    "Severity": "High",
+                    "Suggestion": "Rename one of the duplicated citation keys.",
+                }
+            )
+
+        if doi and doi_counts.get(doi, 0) > 1:
+            report_rows.append(
+                {
+                    "Citation Key": key,
+                    "Issue": "Duplicate DOI",
+                    "Severity": "High",
+                    "Suggestion": "Remove duplicate entries that refer to the same paper.",
+                }
+            )
+
+        if title_norm and title_counts.get(title_norm, 0) > 1:
+            report_rows.append(
+                {
+                    "Citation Key": key,
+                    "Issue": "Possible duplicate title",
+                    "Severity": "Medium",
+                    "Suggestion": "Check whether these entries refer to the same work.",
+                }
+            )
+
+        # Citation key quality
+        if is_weak_citation_key(key):
+            report_rows.append(
+                {
+                    "Citation Key": key,
+                    "Issue": "Weak citation key",
+                    "Severity": "Low",
+                    "Suggestion": "Use a clearer key such as AuthorYearKeyword.",
+                }
+            )
+
+        if len(key) > 45:
+            report_rows.append(
+                {
+                    "Citation Key": key,
+                    "Issue": "Very long citation key",
+                    "Severity": "Low",
+                    "Suggestion": "Consider using a shorter citation key style.",
+                }
+            )
+
+        if re.search(r"\s", key):
+            report_rows.append(
+                {
+                    "Citation Key": key,
+                    "Issue": "Citation key contains spaces",
+                    "Severity": "High",
+                    "Suggestion": "Remove spaces from citation keys.",
+                }
+            )
+
+        noisy_fields = [
+            field for field in [
+                "abstract", "file", "keywords", "timestamp", "annotation",
+                "mendeley-groups", "urldate", "language", "langid"
+            ]
+            if field in entry
+        ]
+
+        if noisy_fields:
+            report_rows.append(
+                {
+                    "Citation Key": key,
+                    "Issue": f"Noisy fields detected: {', '.join(noisy_fields)}",
+                    "Severity": "Low",
+                    "Suggestion": "Use BibTeX Cleaner to remove noisy fields before exporting.",
+                }
+            )
+
+    return report_rows
+
+
+def summarize_quality_report(report_rows: list) -> dict:
+    """
+    Summarize issue counts by severity.
+    """
+    summary = {"High": 0, "Medium": 0, "Low": 0}
+
+    for row in report_rows:
+        severity = row.get("Severity", "")
+
+        if severity in summary:
+            summary[severity] += 1
+
+    return summary
 
 
 # ============================================================
@@ -954,6 +1316,19 @@ skip_existing_doi = st.sidebar.checkbox(
     value=True
 )
 
+# Add citation key selector to sidebar
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("Citation Key Options")
+
+citation_key_style = st.sidebar.selectbox(
+    "Citation key style",
+    options=list(CITATION_KEY_STYLES.keys()),
+    index=0
+)
+
+st.sidebar.caption(CITATION_KEY_STYLES[citation_key_style]["description"])
+
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("Export Options")
@@ -1001,12 +1376,13 @@ st.sidebar.caption(f"BibFlow Version {APP_VERSION}")
 
 
 
-single_tab, batch_tab, title_tab, cleaner_tab = st.tabs(
+single_tab, batch_tab, title_tab, cleaner_tab, quality_tab = st.tabs(
     [
         "🔎 Single DOI",
         "📦 Batch + Merge",
         "📝 Title Search",
         "🧹 BibTeX Cleaner",
+        "📊 Quality Report",
     ]
 )
 
@@ -1056,7 +1432,7 @@ with single_tab:
             st.error("Could not parse the BibTeX entry.")
             st.stop()
 
-        suggested_key = generate_citation_key(entry)
+        suggested_key = generate_citation_key(entry, citation_key_style=citation_key_style)
         final_suggested_key = make_unique_key(suggested_key, set(existing_keys))
 
         st.success("BibTeX generated successfully.")
@@ -1223,7 +1599,7 @@ with batch_tab:
                     progress_bar.progress(i / len(dois))
                     continue
 
-                suggested_key = generate_citation_key(entry)
+                suggested_key = generate_citation_key(entry, citation_key_style=citation_key_style)
                 final_key = make_unique_key(suggested_key, used_keys)
 
                 entry["ID"] = final_key
@@ -1470,7 +1846,7 @@ with title_tab:
                 st.error("Could not parse the BibTeX entry.")
                 st.stop()
 
-            suggested_key = generate_citation_key(entry)
+            suggested_key = generate_citation_key(entry, citation_key_style=citation_key_style)
             final_suggested_key = make_unique_key(suggested_key, set(existing_keys))
 
             st.success("BibTeX generated successfully from title search.")
@@ -1651,6 +2027,7 @@ with cleaner_tab:
             regenerate_key=cleaner_regenerate_key,
             protect_titles=cleaner_protect_titles,
             remove_extra_fields=cleaner_remove_extra_fields,
+            citation_key_style=citation_key_style,
         )
 
         st.divider()
@@ -1713,6 +2090,132 @@ with cleaner_tab:
 
         else:
             st.warning("No cleaned entries were generated. They may all be duplicates or invalid entries.")
+
+
+
+# ============================================================
+# Reference Quality Report workflow
+# ============================================================
+
+with quality_tab:
+
+    st.markdown("## Reference Quality Report")
+
+    st.markdown(
+        """
+        Use this mode to check whether your `.bib` file is clean and ready for Overleaf.
+
+        BibFlow checks common reference problems such as missing fields, duplicate DOI records,
+        duplicate citation keys, weak citation keys, and noisy metadata fields.
+        """
+    )
+
+    quality_file = st.file_uploader(
+        "Upload a .bib file for quality checking",
+        type=["bib"],
+        key="quality_report_file"
+    )
+
+    use_sidebar_bib = False
+
+    if uploaded_bib is not None:
+        use_sidebar_bib = st.checkbox(
+            "Use the references.bib uploaded in the sidebar",
+            value=True,
+            key="quality_use_sidebar_bib"
+        )
+
+    run_quality_button = st.button(
+        "Run Quality Report",
+        type="primary",
+        key="quality_report_button"
+    )
+
+    if run_quality_button:
+
+        quality_content = ""
+
+        if use_sidebar_bib and uploaded_bib is not None:
+            quality_content = existing_bib_content
+
+        elif quality_file is not None:
+            quality_content = quality_file.getvalue().decode("utf-8", errors="ignore")
+
+        else:
+            st.warning("Please upload a .bib file or use the file uploaded in the sidebar.")
+            st.stop()
+
+        try:
+            quality_entries = parse_bibtex_entries(quality_content)
+        except Exception as e:
+            st.error(f"Failed to parse .bib file: {e}")
+            st.stop()
+
+        if not quality_entries:
+            st.warning("No BibTeX entries were found.")
+            st.stop()
+
+        report_rows = build_reference_quality_report(quality_entries)
+        quality_summary = summarize_quality_report(report_rows)
+
+        st.divider()
+
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+            st.metric("Total entries", len(quality_entries))
+
+        with col2:
+            st.metric("High severity", quality_summary["High"])
+
+        with col3:
+            st.metric("Medium severity", quality_summary["Medium"])
+
+        with col4:
+            st.metric("Low severity", quality_summary["Low"])
+
+        if not report_rows:
+            st.success("No major reference quality issues detected.")
+        else:
+            st.markdown("### Issues Detected")
+            st.dataframe(report_rows, use_container_width=True)
+
+            # Download report as CSV
+            import csv
+            import io
+
+            output = io.StringIO()
+            writer = csv.DictWriter(
+                output,
+                fieldnames=["Citation Key", "Issue", "Severity", "Suggestion"]
+            )
+            writer.writeheader()
+            writer.writerows(report_rows)
+
+            st.download_button(
+                label="Download quality report as CSV",
+                data=output.getvalue(),
+                file_name="bibflow_reference_quality_report.csv",
+                mime="text/csv",
+                key="quality_report_download_button"
+            )
+
+        st.markdown("### Suggested Next Step")
+
+        if quality_summary["High"] > 0:
+            st.warning(
+                "High-severity issues were found. Fix duplicate keys, duplicate DOI records, or missing core fields first."
+            )
+        elif quality_summary["Medium"] > 0:
+            st.info(
+                "Medium-severity issues were found. The file is usable, but you may want to improve metadata completeness."
+            )
+        elif quality_summary["Low"] > 0:
+            st.info(
+                "Only low-severity issues were found. You can use BibTeX Cleaner to remove noisy fields or improve citation keys."
+            )
+        else:
+            st.success("Your `.bib` file looks clean and ready for Overleaf.")
 
 
 

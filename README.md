@@ -1,135 +1,42 @@
 # BibFlow
 
-BibFlow is a lightweight Streamlit assistant for Zotero–Overleaf BibTeX workflows.
-
-It helps researchers generate, clean, deduplicate, and export Overleaf-ready BibTeX entries from DOI metadata.
-
-## Features
-
-- Convert DOI to BibTeX
-- Generate clean citation keys
-- Edit citation keys manually
-- Upload existing `.bib` files for duplicate checking
-- Download cleaned BibTeX entries
-
-## Motivation
-
-Many researchers use Zotero for reference management and Overleaf for LaTeX writing. However, moving references from Zotero, Google Scholar, or journal pages into Overleaf `.bib` files can be repetitive and error-prone.
-
-BibFlow aims to simplify this workflow.
-
-## Run locally
-
-```bash
-pip install -r requirements.txt
-streamlit run app.py
-```
-
-## Current Version
-
-### Version 1.0 — DOI to BibTeX MVP
-
-The first stable version supports:
-
-- DOI-based BibTeX generation
-- Automatic citation key generation
-- Manual citation key editing
-- Existing `.bib` upload
-- Duplicate DOI checking
-- Duplicate citation key checking
-- Cleaned BibTeX download
-
-This version provides a minimal but complete workflow for researchers who use Zotero, BibTeX, and Overleaf.
-
-
-## Version 1.1 — Batch DOI Processing
-
-Version 1.1 adds batch DOI processing.
-
-New features:
-
-- Paste multiple DOIs, one per line
-- Fetch BibTeX entries in batch
-- Generate unique citation keys
-- Detect duplicate DOI records against uploaded `.bib` files
-- Download a combined `.bib` file
-- Preview uploaded `.bib` plus newly generated entries
-
-
-## Version 1.2 — Clean Merge with Existing `.bib` File
-
-Version 1.2 adds a practical clean-merge workflow for Overleaf users.
-
-New features:
-
-- Upload an existing `references.bib`
-- Paste one or multiple DOI entries
-- Skip DOI records that already exist in the uploaded `.bib`
-- Generate unique citation keys against existing keys
-- Append only new entries to the existing `.bib`
-- Download a clean `merged_references.bib` file
-
-
-## Version 1.3 — Title Search when DOI is Unknown
-
-Version 1.3 adds title-based reference search.
-
-New features:
-
-- Search papers by title using Crossref metadata
-- Add optional author name to improve search quality
-- Display candidate papers with title, author, year, venue, DOI, and score
-- Select the correct candidate
-- Generate BibTeX from the selected DOI
-- Check duplicate DOI and citation key records
-- Download or merge the generated BibTeX entry
-
-
-## Version 1.4 — BibTeX Cleaner & Validator
-
-Version 1.4 adds a raw BibTeX cleaning workflow.
-
-New features:
-
-- Paste raw BibTeX entries
-- Upload raw `.bib` files for cleaning
-- Regenerate citation keys
-- Protect title acronyms
-- Remove noisy fields such as abstracts, local file paths, keywords, timestamps, and annotations
-- Skip duplicated DOI entries against uploaded `references.bib`
-- Download cleaned BibTeX
-- Merge cleaned entries into an existing Overleaf `.bib` file
-
-
-
-# BibFlow
-
 **BibFlow** is a lightweight Streamlit research workflow assistant for researchers who use **Zotero**, **BibTeX**, and **Overleaf**.
 
-It helps users generate, clean, deduplicate, merge, and export Overleaf-ready BibTeX entries from DOI metadata, title search, batch DOI input, or raw BibTeX.
+It helps users generate, clean, deduplicate, merge, validate, and export Overleaf-ready BibTeX entries from DOI metadata, title search, batch DOI input, or raw BibTeX.
+
+---
 
 ## Motivation
 
-Many researchers manage papers in Zotero but write manuscripts in Overleaf. Moving references into an Overleaf `.bib` file can become repetitive and error-prone, especially when citation keys are inconsistent, duplicate references appear, or BibTeX entries from Google Scholar contain noisy fields.
+Many researchers manage papers in Zotero but write manuscripts in Overleaf. Moving references into an Overleaf `.bib` file can become repetitive and error-prone, especially when:
+
+- citation keys are inconsistent;
+- duplicate references appear;
+- DOI fields are missing or messy;
+- Google Scholar BibTeX contains noisy fields;
+- Overleaf `references.bib` becomes difficult to maintain over time.
 
 BibFlow aims to simplify this workflow.
 
-## Current Version
+---
 
-### Version 1.5 — UI and Project Polish
+## Live Demo
 
-Version 1.5 improves the app interface and project presentation.
+> Add your Streamlit app link here after deployment.
 
-Main improvements:
+**Streamlit App:** `https://your-bibflow-app.streamlit.app/`
 
-- Cleaner Streamlit interface
-- Branded app header
-- Feature cards
-- More readable sidebar
-- Professional tab names
-- App footer
-- Streamlit theme configuration
-- Improved GitHub/portfolio readiness
+---
+
+## Screenshots
+
+Add screenshots after deployment:
+
+| Home / Overview | DOI to BibTeX | Quality Report |
+|---|---|---|
+| `docs/screenshots/home.png` | `docs/screenshots/single-doi.png` | `docs/screenshots/quality-report.png` |
+
+---
 
 ## Core Features
 
@@ -140,7 +47,29 @@ Main improvements:
 - Raw BibTeX cleaning and validation
 - Duplicate DOI checking
 - Citation key regeneration
+- Citation key style presets
+- BibTeX export presets
+- Reference quality report
 - Cleaned and merged `.bib` downloads
+
+---
+
+## Current Version
+
+### Version 1.8 — Deployment Polish, Sample Files, and Documentation
+
+Version 1.8 focuses on project presentation and deployment readiness.
+
+Main improvements:
+
+- Improved README structure
+- Sample `.bib` files for testing
+- Screenshot checklist
+- Streamlit deployment checklist
+- Changelog
+- Cleaner GitHub portfolio presentation
+
+---
 
 ## Research Workflow
 
@@ -149,19 +78,139 @@ Zotero / DOI / paper title / raw BibTeX
 → BibFlow
 → clean Overleaf-ready references.bib
 → LaTeX writing
+```
 
+---
 
-## Version 1.6 — Export Options and BibTeX Style Presets
+## App Modes
 
-Version 1.6 adds flexible BibTeX export options.
+### 1. Single DOI
 
-New features:
+Generate a BibTeX entry from one DOI.
 
-- Export preset selector
-- Overleaf Clean preset
-- Minimal Citation preset
-- DOI + URL Friendly preset
-- Full Metadata preset
-- Optional citation-key sorting
-- Optional BibFlow export header
-- Cleaner output control for different LaTeX writing workflows
+### 2. Batch + Merge
+
+Paste multiple DOIs, generate BibTeX entries, skip duplicates, and merge with an uploaded `references.bib`.
+
+### 3. Title Search
+
+Search by paper title when the DOI is unknown, select the correct candidate, and generate BibTeX.
+
+### 4. BibTeX Cleaner
+
+Paste raw BibTeX or upload a raw `.bib` file, then clean entries, regenerate keys, and remove noisy fields.
+
+### 5. Quality Report
+
+Upload a `.bib` file and check for missing fields, duplicate DOI records, duplicate citation keys, weak keys, and noisy metadata.
+
+---
+
+## Citation Key Styles
+
+BibFlow supports multiple citation key styles:
+
+| Style | Example |
+|---|---|
+| `AuthorYearKeyword` | `Bollerslev2009Variance` |
+| `AuthorYear` | `Bollerslev2009` |
+| `AuthorYearJournal` | `Bollerslev2009RFS` |
+| `AuthorYearShortTitle` | `Bollerslev2009VarianceRisk` |
+
+---
+
+## BibTeX Export Presets
+
+| Preset | Purpose |
+|---|---|
+| `Overleaf Clean` | Recommended default for academic LaTeX writing |
+| `Minimal Citation` | Compact manuscript-ready output |
+| `DOI + URL Friendly` | Keeps DOI and URL for easier reference tracking |
+| `Full Metadata` | Preserves all parsed fields |
+
+---
+
+## Run Locally
+
+```bash
+pip install -r requirements.txt
+streamlit run app.py
+```
+
+---
+
+## Requirements
+
+```text
+streamlit
+requests
+bibtexparser==1.4.3
+```
+
+---
+
+## Suggested Repository Structure
+
+```text
+bibflow-streamlit/
+│
+├── app.py
+├── README.md
+├── CHANGELOG.md
+├── requirements.txt
+├── .gitignore
+│
+├── .streamlit/
+│   └── config.toml
+│
+├── examples/
+│   ├── sample_references.bib
+│   └── problematic_references.bib
+│
+└── docs/
+    └── screenshots/
+        ├── home.png
+        ├── single-doi.png
+        ├── batch-merge.png
+        ├── title-search.png
+        ├── cleaner.png
+        └── quality-report.png
+```
+
+---
+
+## Deployment
+
+This app is designed for Streamlit Community Cloud deployment.
+
+Recommended deployment settings:
+
+```text
+Repository: XiaodongYangQF/bibflow-streamlit
+Branch: main
+Main file path: app.py
+Python version: same as local development if possible
+```
+
+---
+
+## Roadmap
+
+- Version 1.9: Better error handling and user messages
+- Version 2.0: Zotero API integration
+- Version 2.1: Project-level reference library management
+- Version 2.2: Better BibTeX-compatible key rules
+
+---
+
+## Author
+
+**Xiaodong Yang**  
+PhD Candidate in Quantitative Finance  
+University College Dublin
+
+---
+
+## License
+
+You can add an MIT License if you want this to be an open-source portfolio project.
