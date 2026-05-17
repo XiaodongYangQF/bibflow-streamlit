@@ -151,3 +151,17 @@ Zotero / DOI / paper title / raw BibTeX
 → LaTeX writing
 
 
+## Version 1.6 — Export Options and BibTeX Style Presets
+
+Version 1.6 adds flexible BibTeX export options.
+
+New features:
+
+- Export preset selector
+- Overleaf Clean preset
+- Minimal Citation preset
+- DOI + URL Friendly preset
+- Full Metadata preset
+- Optional citation-key sorting
+- Optional BibFlow export header
+- Cleaner output control for different LaTeX writing workflows
