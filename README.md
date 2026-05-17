@@ -83,3 +83,19 @@ New features:
 - Generate BibTeX from the selected DOI
 - Check duplicate DOI and citation key records
 - Download or merge the generated BibTeX entry
+
+
+## Version 1.4 — BibTeX Cleaner & Validator
+
+Version 1.4 adds a raw BibTeX cleaning workflow.
+
+New features:
+
+- Paste raw BibTeX entries
+- Upload raw `.bib` files for cleaning
+- Regenerate citation keys
+- Protect title acronyms
+- Remove noisy fields such as abstracts, local file paths, keywords, timestamps, and annotations
+- Skip duplicated DOI entries against uploaded `references.bib`
+- Download cleaned BibTeX
+- Merge cleaned entries into an existing Overleaf `.bib` file
