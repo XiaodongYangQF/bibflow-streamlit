@@ -54,3 +54,17 @@ New features:
 - Detect duplicate DOI records against uploaded `.bib` files
 - Download a combined `.bib` file
 - Preview uploaded `.bib` plus newly generated entries
+
+
+## Version 1.2 — Clean Merge with Existing `.bib` File
+
+Version 1.2 adds a practical clean-merge workflow for Overleaf users.
+
+New features:
+
+- Upload an existing `references.bib`
+- Paste one or multiple DOI entries
+- Skip DOI records that already exist in the uploaded `.bib`
+- Generate unique citation keys against existing keys
+- Append only new entries to the existing `.bib`
+- Download a clean `merged_references.bib` file
