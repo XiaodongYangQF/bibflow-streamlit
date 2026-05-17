@@ -23,3 +23,20 @@ BibFlow aims to simplify this workflow.
 ```bash
 pip install -r requirements.txt
 streamlit run app.py
+```
+
+## Current Version
+
+### Version 1.0 — DOI to BibTeX MVP
+
+The first stable version supports:
+
+- DOI-based BibTeX generation
+- Automatic citation key generation
+- Manual citation key editing
+- Existing `.bib` upload
+- Duplicate DOI checking
+- Duplicate citation key checking
+- Cleaned BibTeX download
+
+This version provides a minimal but complete workflow for researchers who use Zotero, BibTeX, and Overleaf.
