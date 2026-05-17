@@ -1,5 +1,6 @@
 import re
 import requests
+import pandas as pd
 import streamlit as st
 import bibtexparser
 from bibtexparser.bwriter import BibTexWriter
@@ -21,9 +22,9 @@ st.set_page_config(
 # App branding and UI helpers
 # ============================================================
 
-APP_VERSION = "1.7"
+APP_VERSION = "2.0A"
 APP_NAME = "BibFlow"
-APP_TAGLINE = "A Streamlit Assistant for Zotero–Overleaf BibTeX Workflows"
+APP_TAGLINE = "A Research Library Assistant for BibTeX, Overleaf, and Academic Workflows"
 
 
 EXPORT_PRESETS = {
@@ -1270,6 +1271,198 @@ def summarize_quality_report(report_rows: list) -> dict:
 
 
 # ============================================================
+# Research Library helper functions
+# ============================================================
+
+def get_entry_year(entry: dict) -> str:
+    """
+    Extract publication year from a BibTeX entry.
+    """
+    year = clean_text(entry.get("year", "") or entry.get("date", ""))
+
+    year_match = re.search(r"\d{4}", year)
+    if year_match:
+        return year_match.group(0)
+
+    return ""
+
+
+def get_entry_journal(entry: dict) -> str:
+    """
+    Extract journal / venue name from a BibTeX entry.
+    """
+    journal = (
+        entry.get("journal", "")
+        or entry.get("journaltitle", "")
+        or entry.get("booktitle", "")
+        or entry.get("publisher", "")
+    )
+
+    return clean_text(journal)
+
+
+def get_entry_authors_short(entry: dict, max_authors: int = 3) -> str:
+    """
+    Convert BibTeX author field into a readable short author string.
+    """
+    author_field = clean_text(entry.get("author", ""))
+
+    if not author_field:
+        return ""
+
+    authors = [a.strip() for a in author_field.split(" and ") if a.strip()]
+
+    formatted_authors = []
+
+    for author in authors[:max_authors]:
+        if "," in author:
+            last, first = author.split(",", 1)
+            formatted_authors.append(f"{first.strip()} {last.strip()}".strip())
+        else:
+            formatted_authors.append(author)
+
+    if len(authors) > max_authors:
+        formatted_authors.append("et al.")
+
+    return ", ".join(formatted_authors)
+
+
+def bibtex_entries_to_library_rows(entries: list) -> list:
+    """
+    Convert BibTeX entries into rows for the Research Library table.
+
+    AJG/ABS-related columns are intentionally included as empty placeholders.
+    They will be filled in Version 2.0B when journal ranking matching is added.
+    """
+    rows = []
+
+    for entry in entries:
+        citation_key = entry.get("ID", "")
+        entry_type = entry.get("ENTRYTYPE", "")
+        title = clean_text(entry.get("title", ""))
+        authors = get_entry_authors_short(entry)
+        year = get_entry_year(entry)
+        journal = get_entry_journal(entry)
+        doi = normalize_doi(entry.get("doi", ""))
+
+        rows.append(
+            {
+                "Citation Key": citation_key,
+                "Entry Type": entry_type,
+                "Title": title,
+                "Authors": authors,
+                "Year": year,
+                "Journal / Venue": journal,
+                "DOI": doi,
+
+                # Prepared for Version 2.0B
+                "AJG Rating": "",
+                "AJG Field": "",
+                "AJG Source Year": "",
+                "Ranking Match Status": "Not matched yet",
+            }
+        )
+
+    return rows
+
+
+def filter_library_dataframe(
+    df: pd.DataFrame,
+    search_text: str = "",
+    selected_years: list = None,
+    selected_journals: list = None,
+    selected_entry_types: list = None,
+) -> pd.DataFrame:
+    """
+    Apply search and filters to the Research Library dataframe.
+    """
+    filtered = df.copy()
+
+    if search_text.strip():
+        search_cols = [
+            "Citation Key",
+            "Title",
+            "Authors",
+            "Year",
+            "Journal / Venue",
+            "DOI",
+            "Entry Type",
+        ]
+
+        search_blob = (
+            filtered[search_cols]
+            .fillna("")
+            .astype(str)
+            .agg(" ".join, axis=1)
+            .str.lower()
+        )
+
+        filtered = filtered[
+            search_blob.str.contains(search_text.strip().lower(), regex=False)
+        ]
+
+    if selected_years:
+        filtered = filtered[filtered["Year"].isin(selected_years)]
+
+    if selected_journals:
+        filtered = filtered[filtered["Journal / Venue"].isin(selected_journals)]
+
+    if selected_entry_types:
+        filtered = filtered[filtered["Entry Type"].isin(selected_entry_types)]
+
+    return filtered
+
+
+def summarize_research_library(df: pd.DataFrame) -> dict:
+    """
+    Build simple summary statistics for the Research Library tab.
+    """
+    total_references = len(df)
+
+    doi_count = 0
+    missing_doi_count = 0
+    journal_count = 0
+    year_range = "N/A"
+
+    if total_references > 0:
+        doi_count = df["DOI"].fillna("").astype(str).str.strip().ne("").sum()
+        missing_doi_count = total_references - doi_count
+
+        journal_count = (
+            df["Journal / Venue"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+            .replace("", pd.NA)
+            .dropna()
+            .nunique()
+        )
+
+        years = (
+            df["Year"]
+            .fillna("")
+            .astype(str)
+            .str.extract(r"(\d{4})")[0]
+            .dropna()
+            .astype(int)
+        )
+
+        if not years.empty:
+            year_range = f"{years.min()}–{years.max()}"
+
+    return {
+        "total_references": total_references,
+        "doi_count": int(doi_count),
+        "missing_doi_count": int(missing_doi_count),
+        "journal_count": int(journal_count),
+        "year_range": year_range,
+    }
+
+
+
+
+
+# ============================================================
 # Session state
 # ============================================================
 
@@ -1376,13 +1569,15 @@ st.sidebar.caption(f"BibFlow Version {APP_VERSION}")
 
 
 
-single_tab, batch_tab, title_tab, cleaner_tab, quality_tab = st.tabs(
+
+single_tab, batch_tab, title_tab, cleaner_tab, quality_tab, library_tab = st.tabs(
     [
         "🔎 Single DOI",
         "📦 Batch + Merge",
         "📝 Title Search",
         "🧹 BibTeX Cleaner",
         "📊 Quality Report",
+        "📚 Research Library",
     ]
 )
 
@@ -2217,6 +2412,199 @@ with quality_tab:
         else:
             st.success("Your `.bib` file looks clean and ready for Overleaf.")
 
+
+
+# ============================================================
+# Research Library workflow
+# ============================================================
+
+with library_tab:
+
+    st.markdown("## Research Library Explorer")
+
+    st.markdown(
+        """
+        Upload a `.bib` file and turn your references into a searchable research library.
+
+        This Version 2.0A feature helps you inspect, filter, and export your literature collection.
+        The table is also prepared for future **ABS/AJG journal ranking matching** in Version 2.0B.
+        """
+    )
+
+    st.info(
+        "Tip: You can use the existing `.bib` file uploaded in the sidebar, "
+        "or upload a separate `.bib` file below for library exploration."
+    )
+
+    library_bib_file = st.file_uploader(
+        "Upload a .bib file for Research Library Explorer",
+        type=["bib"],
+        key="research_library_bib_file"
+    )
+
+    library_content = ""
+
+    if library_bib_file is not None:
+        library_content = library_bib_file.getvalue().decode("utf-8", errors="ignore")
+    elif existing_bib_content.strip():
+        library_content = existing_bib_content
+
+    if not library_content.strip():
+        st.warning("Please upload a `.bib` file to explore your research library.")
+        st.stop()
+
+    try:
+        library_entries = parse_bibtex_entries(library_content)
+    except Exception as e:
+        st.error(f"Failed to parse the uploaded `.bib` file: {e}")
+        st.stop()
+
+    if not library_entries:
+        st.warning("No valid BibTeX entries were found in this file.")
+        st.stop()
+
+    library_rows = bibtex_entries_to_library_rows(library_entries)
+    library_df = pd.DataFrame(library_rows)
+
+    summary = summarize_research_library(library_df)
+
+    st.markdown("### Library Summary")
+
+    metric_col1, metric_col2, metric_col3, metric_col4, metric_col5 = st.columns(5)
+
+    with metric_col1:
+        st.metric("Total References", summary["total_references"])
+
+    with metric_col2:
+        st.metric("With DOI", summary["doi_count"])
+
+    with metric_col3:
+        st.metric("Missing DOI", summary["missing_doi_count"])
+
+    with metric_col4:
+        st.metric("Unique Journals", summary["journal_count"])
+
+    with metric_col5:
+        st.metric("Year Range", summary["year_range"])
+
+    st.divider()
+
+    st.markdown("### Search and Filter")
+
+    search_text = st.text_input(
+        "Search references",
+        placeholder="Search by title, author, journal, DOI, year, or citation key",
+        key="library_search_text"
+    )
+
+    filter_col1, filter_col2, filter_col3 = st.columns(3)
+
+    with filter_col1:
+        year_options = sorted(
+            [
+                y for y in library_df["Year"].dropna().astype(str).unique()
+                if y.strip()
+            ],
+            reverse=True
+        )
+
+        selected_years = st.multiselect(
+            "Filter by year",
+            options=year_options,
+            key="library_year_filter"
+        )
+
+    with filter_col2:
+        journal_options = sorted(
+            [
+                j for j in library_df["Journal / Venue"].dropna().astype(str).unique()
+                if j.strip()
+            ]
+        )
+
+        selected_journals = st.multiselect(
+            "Filter by journal / venue",
+            options=journal_options,
+            key="library_journal_filter"
+        )
+
+    with filter_col3:
+        entry_type_options = sorted(
+            [
+                t for t in library_df["Entry Type"].dropna().astype(str).unique()
+                if t.strip()
+            ]
+        )
+
+        selected_entry_types = st.multiselect(
+            "Filter by entry type",
+            options=entry_type_options,
+            key="library_entry_type_filter"
+        )
+
+    filtered_library_df = filter_library_dataframe(
+        df=library_df,
+        search_text=search_text,
+        selected_years=selected_years,
+        selected_journals=selected_journals,
+        selected_entry_types=selected_entry_types,
+    )
+
+    st.markdown("### Library Table")
+
+    st.caption(
+        f"Showing {len(filtered_library_df)} of {len(library_df)} references."
+    )
+
+    st.dataframe(
+        filtered_library_df,
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.divider()
+
+    st.markdown("### Export")
+
+    csv_data = filtered_library_df.to_csv(index=False).encode("utf-8")
+
+    st.download_button(
+        label="Download filtered research library as CSV",
+        data=csv_data,
+        file_name="bibflow_research_library.csv",
+        mime="text/csv",
+        key="download_research_library_csv"
+    )
+
+    full_csv_data = library_df.to_csv(index=False).encode("utf-8")
+
+    st.download_button(
+        label="Download full research library as CSV",
+        data=full_csv_data,
+        file_name="bibflow_full_research_library.csv",
+        mime="text/csv",
+        key="download_full_research_library_csv"
+    )
+
+    st.markdown("### Next Version Preview")
+
+    st.markdown(
+        """
+        In **Version 2.0B**, this table will support ABS/AJG journal ranking matching.
+
+        Planned ranking columns:
+
+        ```text
+        AJG Rating
+        AJG Field
+        AJG Source Year
+        Ranking Match Status
+        ```
+
+        The app will allow users to upload their own AJG/ABS ranking CSV file and match references
+        by journal name.
+        """
+    )
 
 
 render_footer()

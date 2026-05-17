@@ -1,3 +1,4 @@
 streamlit
 requests
+pandas
 bibtexparser==1.4.3

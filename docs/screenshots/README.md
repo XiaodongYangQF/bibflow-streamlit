@@ -1,23 +1,25 @@
-# Screenshots
+## Screenshots
 
-Add screenshots here after local testing or after Streamlit deployment.
+### Home
 
-Recommended files:
+![BibFlow home](docs/screenshots/home.png)
 
-```text
-home.png
-single-doi.png
-batch-merge.png
-title-search.png
-cleaner.png
-quality-report.png
-```
+### Single DOI to BibTeX
 
-Suggested screenshot checklist:
+![Single DOI](docs/screenshots/single-doi.png)
 
-1. Home page with feature cards
-2. Single DOI successful BibTeX generation
-3. Batch + Merge processing summary
-4. Title Search candidate selection
-5. BibTeX Cleaner output
-6. Quality Report issue table
+### Batch DOI + Clean Merge
+
+![Batch merge](docs/screenshots/batch-merge.png)
+
+### Title Search
+
+![Title search](docs/screenshots/title-search.png)
+
+### BibTeX Cleaner
+
+![BibTeX cleaner](docs/screenshots/cleaner.png)
+
+### Quality Report
+
+![Quality report](docs/screenshots/quality-report.png)
