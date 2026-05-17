@@ -1,4 +1,5 @@
 import re
+from datetime import datetime
 import requests
 import pandas as pd
 import streamlit as st
@@ -33,9 +34,9 @@ st.set_page_config(
 # App branding and UI helpers
 # ============================================================
 
-APP_VERSION = "2.0E"
+APP_VERSION = "2.0F"
 APP_NAME = "BibFlow"
-APP_TAGLINE = "A Research Library Assistant for BibTeX, Overleaf, and Academic Journal Ranking Workflows"
+APP_TAGLINE = "A polished research library assistant for BibTeX, Overleaf, journal rankings, and literature review workflows"
 
 
 EXPORT_PRESETS = {
@@ -269,9 +270,9 @@ def render_header():
         st.markdown(
             """
             <div class="feature-card">
-                <div class="feature-card-title">Cleaner + Quality Report</div>
+                <div class="feature-card-title">Library + Dashboard</div>
                 <div class="feature-card-text">
-                    Clean raw BibTeX and check whether your references file is Overleaf-ready.
+                    Explore references, match rankings, restore notes, and export literature-review reports.
                 </div>
             </div>
             """,
@@ -288,12 +289,13 @@ def render_header():
             ```text
             Zotero / DOI / paper title / raw BibTeX
             → BibFlow
-            → clean Overleaf-ready references.bib
-            → LaTeX writing
+            → clean references.bib + annotated research library
+            → Overleaf writing + literature-review planning
             ```
 
             It helps reduce repetitive manual work such as copying BibTeX from Google Scholar,
-            fixing citation keys, removing noisy fields, and checking duplicate references.
+            fixing citation keys, removing noisy fields, checking duplicate references, tracking reading progress,
+            and preparing literature-review summaries.
             """
         )
 
@@ -2596,6 +2598,140 @@ def build_literature_review_report(df: pd.DataFrame, scope_label: str = "Filtere
     return report
 
 
+def build_export_filename(stem: str, extension: str = "csv") -> str:
+    """
+    Build a dated export filename for cleaner file management.
+    """
+    clean_stem = re.sub(r"[^A-Za-z0-9_\-]+", "_", stem).strip("_")
+    clean_extension = extension.lstrip(".")
+    date_label = datetime.now().strftime("%Y%m%d")
+
+    return f"{clean_stem}_{date_label}.{clean_extension}"
+
+
+def build_version_testing_checklist() -> str:
+    """
+    Build a compact manual testing checklist for Version 2.0F.
+    """
+    return """
+### Version 2.0F manual testing checklist
+
+Use this checklist before pushing or deploying the app.
+
+```text
+1. Run: streamlit run app.py
+2. Test Single DOI with a known DOI.
+3. Test Batch + Merge with 2-3 DOI values.
+4. Test BibTeX Cleaner with a messy .bib file.
+5. Test Quality Report with a problematic .bib file.
+6. Open Research Library and upload a .bib file.
+7. Confirm ranking match works with demo/private/uploaded ranking data.
+8. Edit Reading Status, Priority, Tags, Citation Candidate, Important, and Notes.
+9. Download the full annotated CSV.
+10. Refresh the app and restore the annotated CSV.
+11. Confirm annotations come back correctly.
+12. Download the literature-review report and dashboard summary tables.
+13. Check unmatched journals and fuzzy matches manually.
+```
+
+Recommended sample files:
+
+```text
+examples/sample_references.bib
+examples/problematic_references.bib
+examples/sample_journal_rankings_demo.csv
+```
+""".strip()
+
+
+def build_library_health_messages(
+    library_df: pd.DataFrame,
+    summary: dict,
+    ranking_summary: dict,
+    annotation_summary: dict,
+    ranking_loaded: bool = False,
+) -> list:
+    """
+    Build practical UI messages for quick quality checks.
+    """
+    messages = []
+    total = max(int(summary.get("total_references", 0)), 1)
+
+    missing_doi_count = int(summary.get("missing_doi_count", 0))
+    missing_doi_share = missing_doi_count / total
+
+    if missing_doi_share >= 0.30:
+        messages.append(
+            (
+                "warning",
+                f"{missing_doi_count} references are missing DOI values. "
+                "This can weaken duplicate detection and metadata tracking."
+            )
+        )
+    elif missing_doi_count > 0:
+        messages.append(
+            (
+                "info",
+                f"{missing_doi_count} references are missing DOI values. "
+                "This is acceptable, but you may want to improve key references first."
+            )
+        )
+
+    if ranking_loaded:
+        unmatched = int(ranking_summary.get("unmatched", 0))
+        unmatched_share = unmatched / total
+
+        if unmatched_share >= 0.30:
+            messages.append(
+                (
+                    "warning",
+                    f"{unmatched} references are unmatched against the ranking file. "
+                    "Download the unmatched journals CSV and check journal names or aliases."
+                )
+            )
+        elif unmatched > 0:
+            messages.append(
+                (
+                    "info",
+                    f"{unmatched} references are unmatched against the ranking file. "
+                    "This is normal for books, working papers, conferences, or naming differences."
+                )
+            )
+
+        if "Match Method" in library_df.columns:
+            fuzzy_count = library_df["Match Method"].fillna("").astype(str).eq("Journal fuzzy").sum()
+            if fuzzy_count > 0:
+                messages.append(
+                    (
+                        "info",
+                        f"{int(fuzzy_count)} references were matched using fuzzy journal-name matching. "
+                        "Manually review these rows before relying on the ranking labels."
+                    )
+                )
+
+    unread = total - int(annotation_summary.get("read", 0))
+    if unread == total and total > 0:
+        messages.append(
+            (
+                "info",
+                "No references are marked as Read yet. Use the editable table to start tracking reading progress."
+            )
+        )
+
+    if int(annotation_summary.get("citation_candidates", 0)) == 0 and total > 0:
+        messages.append(
+            (
+                "info",
+                "No citation candidates are marked yet. Mark likely thesis/paper references to build a citation pipeline."
+            )
+        )
+
+    if not messages:
+        messages.append(("success", "The current library view looks clean. Continue with filtering, annotation, and export."))
+
+    return messages
+
+
 # ============================================================
 # Annotation import / restore helper functions
 # ============================================================
@@ -3701,10 +3837,10 @@ with library_tab:
 
     st.markdown(
         """
-        Upload a `.bib` file and turn your references into a searchable and editable research library.
+        Upload a `.bib` file and turn your references into a searchable, editable, and exportable research library.
 
-        **Version 2.0E** adds a dashboard and literature-review report on top of the Version 2.0D restore workflow:
-        review AJG/FT50 coverage, reading progress, core papers, citation candidates, top journals, and research tags.
+        **Version 2.0F** is a polish and testing update. It keeps the Version 2.0E dashboard/report workflow,
+        but improves guidance, export filenames, quick health checks, and manual testing support.
 
         Ranking data is optional:
         - If a private full ranking file exists, BibFlow loads it automatically.
@@ -3714,10 +3850,12 @@ with library_tab:
     )
 
     st.info(
-        "For public deployment, the full ranking file should stay private. "
-        "Keep it in `data/private/` and exclude this folder from GitHub. "
-        "Annotations can be restored from a previously downloaded annotated CSV. Version 2.0E also generates dashboard summaries and a downloadable literature-review report."
+        "For public deployment, keep the full ranking file private in `data/private/` and exclude this folder from GitHub. "
+        "Use the annotated CSV export/restore workflow to continue literature-review work across sessions."
     )
+
+    with st.expander("Version 2.0F sample files and testing checklist", expanded=False):
+        st.markdown(build_version_testing_checklist())
 
     st.markdown("### 1. Upload BibTeX Library")
 
@@ -4049,6 +4187,21 @@ with library_tab:
             with ann_col5:
                 st.metric("Core Papers", annotation_summary["core_papers"])
 
+            with st.expander("Version 2.0F quick health checks", expanded=True):
+                for message_type, message_text in build_library_health_messages(
+                    library_df=library_df,
+                    summary=summary,
+                    ranking_summary=ranking_summary,
+                    annotation_summary=annotation_summary,
+                    ranking_loaded=ranking_loaded,
+                ):
+                    if message_type == "warning":
+                        st.warning(message_text)
+                    elif message_type == "success":
+                        st.success(message_text)
+                    else:
+                        st.info(message_text)
+
             st.divider()
 
             st.markdown("### Search and Filter")
@@ -4261,7 +4414,8 @@ with library_tab:
 
             st.caption(
                 f"Showing {len(filtered_library_df)} of {len(library_df)} references. "
-                "You can edit reading status, paper type, priority, tags, citation flags, importance, and notes directly in the table."
+                "Edit reading status, paper type, priority, tags, citation flags, importance, and notes directly in the table. "
+                "Download the annotated CSV after editing if you want to keep the work permanently."
             )
 
             disabled_columns = [
@@ -4480,7 +4634,7 @@ with library_tab:
             st.download_button(
                 label="Download literature-review report as Markdown",
                 data=literature_review_report.encode("utf-8"),
-                file_name="bibflow_literature_review_report.md",
+                file_name=build_export_filename("bibflow_literature_review_report", "md"),
                 mime="text/markdown",
                 key="download_literature_review_report_md",
             )
@@ -4504,7 +4658,7 @@ with library_tab:
             st.download_button(
                 label="Download dashboard summary tables as CSV",
                 data=dashboard_summary_export.to_csv(index=False).encode("utf-8"),
-                file_name="bibflow_dashboard_summary_tables.csv",
+                file_name=build_export_filename("bibflow_dashboard_summary_tables", "csv"),
                 mime="text/csv",
                 key="download_dashboard_summary_tables_csv",
             )
@@ -4518,7 +4672,7 @@ with library_tab:
             st.download_button(
                 label="Download filtered annotated research library as CSV",
                 data=csv_data,
-                file_name="bibflow_annotated_research_library_filtered.csv",
+                file_name=build_export_filename("bibflow_annotated_research_library_filtered", "csv"),
                 mime="text/csv",
                 key="download_annotated_research_library_csv"
             )
@@ -4528,7 +4682,7 @@ with library_tab:
             st.download_button(
                 label="Download full annotated research library as CSV",
                 data=full_csv_data,
-                file_name="bibflow_annotated_research_library_full.csv",
+                file_name=build_export_filename("bibflow_annotated_research_library_full", "csv"),
                 mime="text/csv",
                 key="download_full_annotated_research_library_csv"
             )
@@ -4558,7 +4712,7 @@ with library_tab:
             st.download_button(
                 label="Download annotations-only CSV for restore/import",
                 data=annotations_only_csv,
-                file_name="bibflow_annotations_only.csv",
+                file_name=build_export_filename("bibflow_annotations_only", "csv"),
                 mime="text/csv",
                 key="download_annotations_only_csv"
             )
@@ -4573,7 +4727,7 @@ with library_tab:
                 st.download_button(
                     label="Download unmatched journals for manual checking",
                     data=unmatched_csv,
-                    file_name="bibflow_unmatched_journals.csv",
+                    file_name=build_export_filename("bibflow_unmatched_journals", "csv"),
                     mime="text/csv",
                     key="download_unmatched_journals_csv"
                 )
@@ -4586,7 +4740,7 @@ with library_tab:
                 - The correct interpretation is: *this paper is published in an AJG 3 journal*.
                 - FT50 also identifies journals, not paper quality directly.
                 - Reading status, tags, priority, citation flags, importance flags, and notes can now be restored from a previously downloaded annotated CSV.
-                - Version 2.0E adds a dashboard and downloadable literature-review report for your filtered or full library.
+                - Version 2.0F adds polish, clearer testing guidance, quick health checks, and dated export filenames.
                 - To continue your work later, download the annotated CSV and upload it again in the restore section.
                 - Fuzzy matches should be manually checked, especially when the match score is below 1.00.
                 - Keep the full ranking file private unless redistribution is clearly allowed.
