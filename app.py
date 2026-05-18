@@ -1,4 +1,6 @@
 import re
+import html as html_lib
+from urllib.parse import unquote
 from datetime import datetime
 import requests
 import pandas as pd
@@ -34,9 +36,9 @@ st.set_page_config(
 # App branding and UI helpers
 # ============================================================
 
-APP_VERSION = "2.2B"
+APP_VERSION = "2.3"
 APP_NAME = "BibFlow"
-APP_TAGLINE = "A polished research library assistant for BibTeX, Overleaf, journal rankings, and literature review workflows"
+APP_TAGLINE = "A polished research library assistant for BibTeX, Overleaf, Zotero HTML exports, journal rankings, and literature review workflows"
 
 
 EXPORT_PRESETS = {
@@ -359,6 +361,148 @@ def fetch_bibtex_from_doi(doi: str) -> str:
     response.raise_for_status()
 
     return response.text.strip()
+
+
+
+DOI_REGEX = re.compile(r"10\.\d{4,9}/[^\s<>'\"\\]+", flags=re.IGNORECASE)
+
+
+def clean_extracted_doi(candidate: str) -> str:
+    """
+    Clean a DOI extracted from HTML, links, or Z3988 metadata.
+    """
+    if not candidate:
+        return ""
+
+    doi = html_lib.unescape(str(candidate))
+    doi = unquote(doi)
+    doi = normalize_doi(doi)
+
+    # Cut off common HTML/query-string artifacts after DOI extraction.
+    doi = re.split(r"[\s<>\"']", doi)[0]
+    doi = doi.split("&")[0]
+    doi = doi.split("#")[0]
+
+    # Remove trailing punctuation often attached in rendered bibliographies.
+    doi = doi.strip().strip(".,;:)]}")
+
+    return doi
+
+
+def extract_dois_from_text(raw_text: str) -> list:
+    """
+    Extract unique DOIs from arbitrary text.
+    """
+    if not raw_text:
+        return []
+
+    decoded_texts = [
+        str(raw_text),
+        html_lib.unescape(str(raw_text)),
+        unquote(html_lib.unescape(str(raw_text))),
+    ]
+
+    found = []
+    seen = set()
+
+    for text in decoded_texts:
+        for match in DOI_REGEX.findall(text):
+            doi = clean_extracted_doi(match)
+            doi_lower = doi.lower()
+            if doi and doi_lower not in seen:
+                seen.add(doi_lower)
+                found.append(doi)
+
+    return found
+
+
+def extract_dois_from_zotero_html(html_content: str) -> dict:
+    """
+    Extract DOI candidates from Zotero-exported bibliography HTML.
+
+    Supports:
+    - visible DOI links, e.g. https://doi.org/10.xxxx/xxxxx
+    - Z3988 metadata spans, e.g. rft_id=info:doi/10.xxxx/xxxxx
+    - plain DOI text in rendered bibliography entries
+    """
+    if not html_content:
+        return {
+            "unique_dois": [],
+            "all_dois": [],
+            "csl_entry_count": 0,
+            "z3988_count": 0,
+            "doi_link_count": 0,
+        }
+
+    raw = str(html_content)
+    decoded = unquote(html_lib.unescape(raw))
+
+    # Count useful Zotero/CSL markers for diagnostics.
+    csl_entry_count = len(re.findall(r'class=["\'][^"\']*csl-entry[^"\']*["\']', raw, flags=re.IGNORECASE))
+    z3988_count = len(re.findall(r'class=["\'][^"\']*Z3988[^"\']*["\']', raw, flags=re.IGNORECASE))
+    doi_link_count = len(re.findall(r'https?://(?:dx\.)?doi\.org/', raw, flags=re.IGNORECASE))
+
+    candidate_sources = []
+    candidate_sources.extend(extract_dois_from_text(raw))
+    candidate_sources.extend(extract_dois_from_text(decoded))
+
+    # Explicitly target Z3988 OpenURL DOI fields after URL decoding.
+    for match in re.findall(r'(?:rft_id=info:doi/|rft_id=doi:)(10\.\d{4,9}/[^&"\'<>\s]+)', decoded, flags=re.IGNORECASE):
+        candidate_sources.append(clean_extracted_doi(match))
+
+    # Explicitly target DOI links.
+    for match in re.findall(r'https?://(?:dx\.)?doi\.org/(10\.\d{4,9}/[^"\'<>\s]+)', decoded, flags=re.IGNORECASE):
+        candidate_sources.append(clean_extracted_doi(match))
+
+    unique_dois = []
+    seen = set()
+    for doi in candidate_sources:
+        cleaned = clean_extracted_doi(doi)
+        key = cleaned.lower()
+        if cleaned and key not in seen:
+            seen.add(key)
+            unique_dois.append(cleaned)
+
+    return {
+        "unique_dois": unique_dois,
+        "all_dois": candidate_sources,
+        "csl_entry_count": csl_entry_count,
+        "z3988_count": z3988_count,
+        "doi_link_count": doi_link_count,
+    }
+
+
+def strip_html_tags(value: str) -> str:
+    """
+    Very small HTML-to-text helper used only for bibliography previews.
+    """
+    if not value:
+        return ""
+    value = re.sub(r"<br\s*/?>", " ", value, flags=re.IGNORECASE)
+    value = re.sub(r"<[^>]+>", " ", value)
+    value = html_lib.unescape(value)
+    value = re.sub(r"\s+", " ", value).strip()
+    return value
+
+
+def extract_csl_entry_preview(html_content: str, max_entries: int = 20) -> list:
+    """
+    Extract a lightweight preview of visible CSL bibliography entries from Zotero HTML.
+    """
+    if not html_content:
+        return []
+
+    entries = re.findall(
+        r'<div[^>]*class=["\'][^"\']*csl-entry[^"\']*["\'][^>]*>(.*?)</div>',
+        html_content,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    preview = []
+    for i, entry_html in enumerate(entries[:max_entries], start=1):
+        preview.append({"#": i, "Bibliography Entry Preview": strip_html_tags(entry_html)})
+
+    return preview
 
 
 def search_crossref_by_title(title: str, author: str = "", rows: int = 8) -> list:
@@ -3036,7 +3180,8 @@ Use this checklist before pushing or deploying the app.
 1. Run: streamlit run app.py
 2. Test Single DOI with a known DOI.
 3. Test Batch + Merge with 2-3 DOI values.
-4. Test BibTeX Cleaner with a messy .bib file.
+4. Test Zotero HTML Import with a bibliography HTML export.
+5. Test BibTeX Cleaner with a messy .bib file.
 5. Test Quality Report with a problematic .bib file.
 6. Open Research Library and upload a .bib file.
 7. Confirm ranking match works with demo/private/uploaded ranking data, including multi-ranking columns.
@@ -3397,10 +3542,11 @@ st.sidebar.caption(f"BibFlow Version {APP_VERSION}")
 
 
 
-single_tab, batch_tab, title_tab, cleaner_tab, quality_tab, library_tab = st.tabs(
+single_tab, batch_tab, html_tab, title_tab, cleaner_tab, quality_tab, library_tab = st.tabs(
     [
         "🔎 Single DOI",
         "📦 Batch + Merge",
+        "🌐 Zotero HTML Import",
         "📝 Title Search",
         "🧹 BibTeX Cleaner",
         "📊 Quality Report",
@@ -3726,6 +3872,289 @@ with batch_tab:
                 st.warning("No new entries were generated because all input DOIs already exist in your uploaded .bib file.")
             elif failed_count > 0:
                 st.warning("No new entries were generated. Please check the failed DOI(s).")
+
+
+
+# ============================================================
+# Zotero HTML Bibliography Import workflow
+# ============================================================
+
+with html_tab:
+
+    st.markdown("## Zotero HTML Bibliography Import")
+
+    st.markdown(
+        """
+        Upload a Zotero-exported **bibliography HTML** file and BibFlow will extract DOI values,
+        fetch clean BibTeX metadata, and generate Overleaf-ready `.bib` output.
+
+        Recommended Zotero export setting:
+
+        ```text
+        Output Mode: Bibliography
+        Output Method: Save as HTML
+        ```
+
+        This works best for full bibliography HTML exports containing DOI links or Zotero `Z3988` metadata.
+        Citation-only HTML, such as only `(Author et al., Year)`, usually does not contain enough metadata.
+        """
+    )
+
+    html_files = st.file_uploader(
+        "Upload Zotero bibliography HTML file(s)",
+        type=["html", "htm"],
+        accept_multiple_files=True,
+        key="zotero_html_import_files",
+    )
+
+    pasted_html = st.text_area(
+        "Optional: paste bibliography HTML text",
+        height=160,
+        placeholder="Paste Zotero bibliography HTML here if you do not want to upload a file...",
+        key="zotero_html_paste_area",
+    )
+
+    html_sources = []
+
+    if html_files:
+        for uploaded_html in html_files:
+            html_content = uploaded_html.getvalue().decode("utf-8", errors="ignore")
+            html_sources.append(
+                {
+                    "Source": uploaded_html.name,
+                    "Content": html_content,
+                }
+            )
+
+    if pasted_html.strip():
+        html_sources.append(
+            {
+                "Source": "Pasted HTML text",
+                "Content": pasted_html,
+            }
+        )
+
+    if not html_sources:
+        st.info("Upload a Zotero bibliography `.html` file, or paste HTML text, to begin.")
+    else:
+        combined_dois = []
+        source_rows = []
+        preview_rows = []
+
+        for source in html_sources:
+            extraction = extract_dois_from_zotero_html(source["Content"])
+            source_dois = extraction["unique_dois"]
+            combined_dois.extend(source_dois)
+
+            source_rows.append(
+                {
+                    "Source": source["Source"],
+                    "CSL entries": extraction["csl_entry_count"],
+                    "Z3988 metadata spans": extraction["z3988_count"],
+                    "DOI links": extraction["doi_link_count"],
+                    "Unique DOIs extracted": len(source_dois),
+                }
+            )
+
+            for row in extract_csl_entry_preview(source["Content"], max_entries=8):
+                row["Source"] = source["Source"]
+                preview_rows.append(row)
+
+        unique_dois = []
+        seen_dois = set()
+        for doi in combined_dois:
+            doi_lower = normalize_doi(doi).lower()
+            if doi_lower and doi_lower not in seen_dois:
+                seen_dois.add(doi_lower)
+                unique_dois.append(normalize_doi(doi))
+
+        st.markdown("### HTML Extraction Summary")
+        st.dataframe(pd.DataFrame(source_rows), use_container_width=True, hide_index=True)
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("HTML sources", len(html_sources))
+        with col2:
+            st.metric("Unique DOIs", len(unique_dois))
+        with col3:
+            duplicate_count = max(0, len(combined_dois) - len(unique_dois))
+            st.metric("Duplicate DOI mentions", duplicate_count)
+
+        if preview_rows:
+            with st.expander("Preview visible bibliography entries", expanded=False):
+                preview_df = pd.DataFrame(preview_rows)
+                preview_df = preview_df[["Source", "#", "Bibliography Entry Preview"]]
+                st.dataframe(preview_df, use_container_width=True, hide_index=True)
+
+        st.markdown("### Extracted DOI List")
+
+        if unique_dois:
+            extracted_doi_text = "\n".join(unique_dois)
+            st.text_area(
+                "Detected DOI values",
+                value=extracted_doi_text,
+                height=180,
+                key="zotero_html_detected_doi_text",
+            )
+
+            st.download_button(
+                label="Download extracted DOI list",
+                data=extracted_doi_text,
+                file_name="bibflow_extracted_dois_from_zotero_html.txt",
+                mime="text/plain",
+                key="zotero_html_download_doi_list",
+            )
+        else:
+            st.warning(
+                "No DOI values were found. This may be a citation-only export or a bibliography without DOI links/Z3988 metadata."
+            )
+
+        generate_from_html_button = st.button(
+            "Generate BibTeX from extracted DOIs",
+            type="primary",
+            key="zotero_html_generate_bibtex_button",
+            disabled=not bool(unique_dois),
+        )
+
+        if generate_from_html_button:
+
+            generated_entries = []
+            result_rows = []
+            used_keys = set(existing_keys)
+
+            progress_bar = st.progress(0)
+            skipped_count = 0
+            failed_count = 0
+
+            for i, doi in enumerate(unique_dois, start=1):
+                doi_lower = doi.lower()
+
+                if uploaded_bib is not None and skip_existing_doi and doi_lower in existing_dois:
+                    skipped_count += 1
+                    result_rows.append(
+                        {
+                            "DOI": doi,
+                            "Citation Key": "",
+                            "Action": "Skipped",
+                            "Status": "Skipped because DOI already exists in uploaded .bib",
+                        }
+                    )
+                    progress_bar.progress(i / len(unique_dois))
+                    continue
+
+                try:
+                    raw_bibtex = fetch_bibtex_from_doi(doi)
+                    entry = parse_bibtex(raw_bibtex)
+
+                    if entry is None:
+                        raise ValueError("Could not parse BibTeX entry returned by DOI resolver.")
+
+                    entry_doi = normalize_doi(entry.get("doi", "")).lower()
+                    duplicate_by_returned_doi = uploaded_bib is not None and entry_doi in existing_dois
+
+                    if skip_existing_doi and duplicate_by_returned_doi:
+                        skipped_count += 1
+                        result_rows.append(
+                            {
+                                "DOI": doi,
+                                "Citation Key": "",
+                                "Action": "Skipped",
+                                "Status": "Skipped because returned DOI already exists in uploaded .bib",
+                            }
+                        )
+                        progress_bar.progress(i / len(unique_dois))
+                        continue
+
+                    suggested_key = generate_citation_key(entry, citation_key_style=citation_key_style)
+                    final_key = make_unique_key(suggested_key, used_keys)
+                    entry["ID"] = final_key
+                    used_keys.add(final_key)
+                    generated_entries.append(entry)
+
+                    result_rows.append(
+                        {
+                            "DOI": doi,
+                            "Citation Key": final_key,
+                            "Action": "Generated",
+                            "Status": "Clean BibTeX entry generated from DOI.",
+                        }
+                    )
+
+                except Exception as e:
+                    failed_count += 1
+                    result_rows.append(
+                        {
+                            "DOI": doi,
+                            "Citation Key": "",
+                            "Action": "Failed",
+                            "Status": f"Failed: {e}",
+                        }
+                    )
+
+                progress_bar.progress(i / len(unique_dois))
+
+            st.divider()
+            st.markdown("### DOI-to-BibTeX Processing Summary")
+
+            metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
+            with metric_col1:
+                st.metric("Extracted DOIs", len(unique_dois))
+            with metric_col2:
+                st.metric("New entries", len(generated_entries))
+            with metric_col3:
+                st.metric("Skipped duplicates", skipped_count)
+            with metric_col4:
+                st.metric("Failed", failed_count)
+
+            st.dataframe(pd.DataFrame(result_rows), use_container_width=True, hide_index=True)
+
+            if generated_entries:
+                html_import_bibtex = entries_to_bibtex(
+                    generated_entries,
+                    export_preset=export_preset,
+                    sort_entries=sort_bib_entries,
+                    include_header=include_export_header,
+                )
+
+                st.markdown("### Clean BibTeX Generated from Zotero HTML")
+                st.code(html_import_bibtex, language="bibtex")
+
+                st.download_button(
+                    label="Download BibTeX generated from HTML",
+                    data=html_import_bibtex,
+                    file_name="bibflow_from_zotero_html.bib",
+                    mime="text/plain",
+                    key="zotero_html_bibtex_download_button",
+                )
+
+                if uploaded_bib is not None:
+                    merged_html_bibtex = build_merged_bib(existing_bib_content, html_import_bibtex)
+
+                    st.markdown("### Clean Merged BibTeX")
+                    st.caption("Your uploaded `.bib` content is preserved. New HTML-derived entries are appended.")
+                    st.code(merged_html_bibtex, language="bibtex")
+
+                    st.download_button(
+                        label="Download merged .bib file",
+                        data=merged_html_bibtex,
+                        file_name="merged_references_from_zotero_html.bib",
+                        mime="text/plain",
+                        key="zotero_html_merged_bibtex_download_button",
+                    )
+                else:
+                    st.info("Upload an existing references.bib file in the sidebar to enable clean merge output.")
+            else:
+                st.warning("No new BibTeX entries were generated from the extracted DOI list.")
+
+    st.markdown("### Notes")
+    st.markdown(
+        """
+        - Best input: Zotero **Bibliography** exported as **HTML**.
+        - Different citation styles are okay if the HTML still contains DOI links or Z3988 metadata.
+        - Citation-only exports are not reliable because they usually lack full metadata.
+        - RTF import is not supported in this version; HTML is more structured and safer to parse.
+        """
+    )
 
 
 # ============================================================
