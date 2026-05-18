@@ -29,3 +29,4 @@ BibFlow provides a research workflow for cleaning BibTeX references, managing a 
 | Annotation Dashboard | Literature Review Report |
 |---|---|
 | ![Annotation Dashboard](docs/screenshots/annotation-dashboard.png) | ![Literature Review Report](docs/screenshots/literature-review-report.png) |
+git push origin v2.1
