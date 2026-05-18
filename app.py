@@ -34,7 +34,7 @@ st.set_page_config(
 # App branding and UI helpers
 # ============================================================
 
-APP_VERSION = "2.2"
+APP_VERSION = "2.2B"
 APP_NAME = "BibFlow"
 APP_TAGLINE = "A polished research library assistant for BibTeX, Overleaf, journal rankings, and literature review workflows"
 
@@ -1804,6 +1804,29 @@ def standardize_ranking_dataframe(raw_df: pd.DataFrame) -> pd.DataFrame:
         ],
     )
 
+    ssci_col = find_column(
+        df,
+        [
+            "ssci",
+            "ssci_status",
+            "ssci status",
+            "ssci_indexed",
+            "ssci indexed",
+            "social sciences citation index",
+        ],
+    )
+
+    ssci_categories_col = find_column(
+        df,
+        [
+            "ssci_categories",
+            "ssci categories",
+            "web of science categories",
+            "wos categories",
+            "categories",
+        ],
+    )
+
     chinese_core_col = find_column(
         df,
         [
@@ -1926,6 +1949,8 @@ def standardize_ranking_dataframe(raw_df: pd.DataFrame) -> pd.DataFrame:
     standardized["JCR Quartile"] = df[jcr_quartile_col].apply(standardize_quartile) if jcr_quartile_col else ""
     standardized["SJR Quartile"] = df[sjr_quartile_col].apply(standardize_quartile) if sjr_quartile_col else ""
     standardized["CSSCI"] = df[cssci_col].apply(standardize_list_indicator) if cssci_col else ""
+    standardized["SSCI"] = df[ssci_col].apply(standardize_list_indicator) if ssci_col else ""
+    standardized["SSCI Categories"] = df[ssci_categories_col].fillna("").astype(str).str.strip() if ssci_categories_col else ""
     standardized["Chinese Core"] = df[chinese_core_col].apply(standardize_list_indicator) if chinese_core_col else ""
     standardized["School Tier"] = df[school_tier_col].fillna("").astype(str).str.strip() if school_tier_col else ""
     standardized["Custom Rating"] = df[custom_rating_col].fillna("").astype(str).str.strip() if custom_rating_col else ""
@@ -1984,6 +2009,8 @@ def bibtex_entries_to_library_rows(entries: list) -> list:
                 "JCR Quartile": "",
                 "SJR Quartile": "",
                 "CSSCI": "",
+                "SSCI": "",
+                "SSCI Categories": "",
                 "Chinese Core": "",
                 "School Tier": "",
                 "Custom Rating": "",
@@ -2075,6 +2102,8 @@ def match_library_with_ranking(
         "JCR Quartile",
         "SJR Quartile",
         "CSSCI",
+        "SSCI",
+        "SSCI Categories",
         "Chinese Core",
         "School Tier",
         "Custom Rating",
@@ -2151,6 +2180,7 @@ def filter_library_dataframe(
     selected_jcr_quartiles: list = None,
     selected_sjr_quartiles: list = None,
     selected_cssci: list = None,
+    selected_ssci: list = None,
     selected_chinese_core: list = None,
     selected_school_tiers: list = None,
     selected_custom_ratings: list = None,
@@ -2162,6 +2192,7 @@ def filter_library_dataframe(
     only_jcr_q1: bool = False,
     only_sjr_q1: bool = False,
     only_cssci: bool = False,
+    only_ssci: bool = False,
     only_chinese_core: bool = False,
     selected_reading_status: list = None,
     selected_priorities: list = None,
@@ -2192,6 +2223,8 @@ def filter_library_dataframe(
             "JCR Quartile",
             "SJR Quartile",
             "CSSCI",
+            "SSCI",
+            "SSCI Categories",
             "Chinese Core",
             "School Tier",
             "Custom Rating",
@@ -2246,6 +2279,9 @@ def filter_library_dataframe(
     if selected_cssci:
         filtered = filtered[filtered["CSSCI"].isin(selected_cssci)]
 
+    if selected_ssci:
+        filtered = filtered[filtered["SSCI"].isin(selected_ssci)]
+
     if selected_chinese_core:
         filtered = filtered[filtered["Chinese Core"].isin(selected_chinese_core)]
 
@@ -2280,6 +2316,9 @@ def filter_library_dataframe(
 
     if only_cssci:
         filtered = filtered[filtered["CSSCI"].fillna("").astype(str).str.strip().ne("")]
+
+    if only_ssci:
+        filtered = filtered[filtered["SSCI"].fillna("").astype(str).str.strip().ne("")]
 
     if only_chinese_core:
         filtered = filtered[filtered["Chinese Core"].fillna("").astype(str).str.strip().ne("")]
@@ -2364,6 +2403,7 @@ def summarize_ranking_matches(df: pd.DataFrame) -> dict:
     jcr_q1 = 0
     sjr_q1 = 0
     cssci_count = 0
+    ssci_count = 0
     chinese_core_count = 0
 
     if total > 0:
@@ -2377,6 +2417,7 @@ def summarize_ranking_matches(df: pd.DataFrame) -> dict:
         jcr_q1 = (df["JCR Quartile"] == "Q1").sum()
         sjr_q1 = (df["SJR Quartile"] == "Q1").sum()
         cssci_count = df["CSSCI"].fillna("").astype(str).str.strip().ne("").sum()
+        ssci_count = df["SSCI"].fillna("").astype(str).str.strip().ne("").sum()
         chinese_core_count = df["Chinese Core"].fillna("").astype(str).str.strip().ne("").sum()
 
     return {
@@ -2390,6 +2431,7 @@ def summarize_ranking_matches(df: pd.DataFrame) -> dict:
         "jcr_q1": int(jcr_q1),
         "sjr_q1": int(sjr_q1),
         "cssci_count": int(cssci_count),
+        "ssci_count": int(ssci_count),
         "chinese_core_count": int(chinese_core_count),
     }
 
@@ -2668,10 +2710,7 @@ def make_top_journal_table(df: pd.DataFrame, top_n: int = 15) -> pd.DataFrame:
         "Best ABDC Rating",
         "Best JCR Quartile",
         "Best SJR Quartile",
-        "CSSCI",
-        "Chinese Core",
-        "School Tier",
-        "Custom Rating",
+        "SSCI",
     ]
 
     if df.empty or required_col not in df.columns:
@@ -2721,8 +2760,7 @@ def make_top_journal_table(df: pd.DataFrame, top_n: int = 15) -> pd.DataFrame:
             return best_q
 
         ft50_flag = "Yes" if "FT50" in group.columns and (group["FT50"] == "Yes").any() else ""
-        cssci_flag = "Yes" if "CSSCI" in group.columns and group["CSSCI"].fillna("").astype(str).str.strip().ne("").any() else ""
-        chinese_core_flag = "Yes" if "Chinese Core" in group.columns and group["Chinese Core"].fillna("").astype(str).str.strip().ne("").any() else ""
+        ssci_flag = "Yes" if "SSCI" in group.columns and group["SSCI"].fillna("").astype(str).str.strip().ne("").any() else ""
 
         rows.append(
             {
@@ -2733,10 +2771,7 @@ def make_top_journal_table(df: pd.DataFrame, top_n: int = 15) -> pd.DataFrame:
                 "Best ABDC Rating": best_abdc,
                 "Best JCR Quartile": best_quartile("JCR Quartile"),
                 "Best SJR Quartile": best_quartile("SJR Quartile"),
-                "CSSCI": cssci_flag,
-                "Chinese Core": chinese_core_flag,
-                "School Tier": first_non_empty(group, "School Tier"),
-                "Custom Rating": first_non_empty(group, "Custom Rating"),
+                "SSCI": ssci_flag,
             }
         )
 
@@ -2775,10 +2810,8 @@ def make_focus_paper_table(
         "FT50",
         "ABDC Rating",
         "JCR Quartile",
-        "CSSCI",
-        "Chinese Core",
-        "School Tier",
-        "Custom Rating",
+        "SJR Quartile",
+        "SSCI",
         "Reading Status",
         "Priority",
         "Paper Type",
@@ -2905,8 +2938,7 @@ def build_literature_review_report(df: pd.DataFrame, scope_label: str = "Filtere
 - ABDC A / A* references: {ranking_summary['abdc_a_or_above']}
 - JCR Q1 references: {ranking_summary['jcr_q1']}
 - SJR Q1 references: {ranking_summary['sjr_q1']}
-- CSSCI references: {ranking_summary['cssci_count']}
-- Chinese-core references: {ranking_summary['chinese_core_count']}
+- SSCI references: {ranking_summary['ssci_count']}
 
 ### AJG Rating Distribution
 
@@ -2973,7 +3005,7 @@ def build_literature_review_report(df: pd.DataFrame, scope_label: str = "Filtere
 ## 5. Interpretation Notes
 
 - Journal rankings classify journals or journal-list membership, not individual paper quality.
-- AJG/ABS, ABDC, FT50, JCR/SJR, CSSCI, Chinese-core, and school-specific lists have different purposes and should not be mechanically compared.
+- AJG/ABS, ABDC, FT50, SSCI, and JCR/SJR indicators have different purposes and should not be mechanically compared.
 - Fuzzy journal matches should be manually checked.
 - Use this report as a literature-review management summary, not as a mechanical quality judgement.
 """
@@ -4223,7 +4255,7 @@ with library_tab:
 
         **Version 2.2** adds multi-ranking support. It keeps the Version 2.0F research-library workflow,
         and extends ranking enrichment beyond AJG/ABS + FT50 to ABDC, JCR/SJR quartiles,
-        CSSCI / Chinese-core style lists, school tiers, and custom user-defined rankings.
+        SSCI indexing, JCR/SJR quartiles, and optional advanced/private ranking columns.
 
         Ranking data is optional:
         - If a private full ranking file exists, BibFlow loads it automatically.
@@ -4385,7 +4417,7 @@ with library_tab:
                     Uploading a ranking file is optional.
 
                     Use this when you want to match your references with AJG/ABS, FT50, ABDC,
-                    JCR/SJR quartiles, CSSCI / Chinese-core style lists, school-specific tiers,
+                    JCR/SJR quartiles, SSCI indexing, and optional advanced/private ranking columns,
                     or your own custom ranking categories.
 
                     Recommended columns:
@@ -4535,10 +4567,10 @@ with library_tab:
                     st.metric("JCR Q1", ranking_summary["jcr_q1"])
 
                 with multi_rank_col4:
-                    st.metric("CSSCI", ranking_summary["cssci_count"])
+                    st.metric("SJR Q1", ranking_summary["sjr_q1"])
 
                 with multi_rank_col5:
-                    st.metric("Chinese Core", ranking_summary["chinese_core_count"])
+                    st.metric("SSCI", ranking_summary["ssci_count"])
 
                 ajg_counts = (
                     library_df["AJG Rating"]
@@ -4790,68 +4822,55 @@ with library_tab:
                     key="library_sjr_quartile_filter"
                 )
 
-            list_filter_col1, list_filter_col2, list_filter_col3 = st.columns(3)
+            selected_cssci = []
+            selected_chinese_core = []
+            selected_school_tiers = []
+            selected_custom_ratings = []
 
-            with list_filter_col1:
-                cssci_options = sorted(
+            compact_filter_col1, compact_filter_col2 = st.columns(2)
+
+            with compact_filter_col1:
+                ssci_options = sorted(
                     [
-                        x for x in library_df["CSSCI"].dropna().astype(str).unique()
+                        x for x in library_df["SSCI"].dropna().astype(str).unique()
                         if x.strip()
                     ]
                 )
 
-                selected_cssci = st.multiselect(
-                    "Filter by CSSCI",
-                    options=cssci_options,
-                    key="library_cssci_filter"
+                selected_ssci = st.multiselect(
+                    "Filter by SSCI",
+                    options=ssci_options,
+                    key="library_ssci_filter"
                 )
 
-            with list_filter_col2:
-                chinese_core_options = sorted(
-                    [
-                        x for x in library_df["Chinese Core"].dropna().astype(str).unique()
-                        if x.strip()
-                    ]
+            with compact_filter_col2:
+                st.caption(
+                    "Main ranking view: AJG Rating, AJG Field, FT50, ABDC Rating, JCR Quartile, SJR Quartile, and SSCI. "
+                    "Advanced details are kept only for source, custom-rating, and match-checking information."
                 )
 
-                selected_chinese_core = st.multiselect(
-                    "Filter by Chinese Core",
-                    options=chinese_core_options,
-                    key="library_chinese_core_filter"
-                )
+            with st.expander("Advanced ranking filters", expanded=False):
+                adv_custom_col1, adv_custom_col2 = st.columns(2)
 
-            with list_filter_col3:
-                school_tier_options = sorted(
-                    [
-                        x for x in library_df["School Tier"].dropna().astype(str).unique()
-                        if x.strip()
-                    ]
-                )
+                with adv_custom_col1:
+                    custom_rating_options = sorted(
+                        [
+                            x for x in library_df["Custom Rating"].dropna().astype(str).unique()
+                            if x.strip()
+                        ]
+                    )
 
-                selected_school_tiers = st.multiselect(
-                    "Filter by school tier",
-                    options=school_tier_options,
-                    key="library_school_tier_filter"
-                )
+                    selected_custom_ratings = st.multiselect(
+                        "Filter by custom rating",
+                        options=custom_rating_options,
+                        key="library_custom_rating_filter"
+                    )
 
-            custom_filter_col1, custom_filter_col2 = st.columns(2)
-
-            with custom_filter_col1:
-                custom_rating_options = sorted(
-                    [
-                        x for x in library_df["Custom Rating"].dropna().astype(str).unique()
-                        if x.strip()
-                    ]
-                )
-
-                selected_custom_ratings = st.multiselect(
-                    "Filter by custom rating",
-                    options=custom_rating_options,
-                    key="library_custom_rating_filter"
-                )
-
-            with custom_filter_col2:
-                st.caption("Version 2.2 supports uploaded multi-ranking files. Empty filters simply mean that no such ranking values were detected.")
+                with adv_custom_col2:
+                    st.caption(
+                        "Custom rating is optional and designed for future private or school-specific ranking systems. "
+                        "CSSCI, Chinese Core, and School Tier are not shown in the current compact workflow."
+                    )
 
             quick_filter_col1, quick_filter_col2, quick_filter_col3, quick_filter_col4 = st.columns(4)
 
@@ -4900,18 +4919,17 @@ with library_tab:
                 )
 
             with extra_quick_col3:
-                only_cssci = st.checkbox(
-                    "Show only CSSCI",
+                only_ssci = st.checkbox(
+                    "Show only SSCI",
                     value=False,
-                    key="only_cssci_filter"
+                    key="only_ssci_filter"
                 )
 
             with extra_quick_col4:
-                only_chinese_core = st.checkbox(
-                    "Show only Chinese Core",
-                    value=False,
-                    key="only_chinese_core_filter"
-                )
+                st.caption("Custom rating is available under Advanced ranking filters. CSSCI, Chinese Core, and School Tier are hidden for now.")
+
+            only_cssci = False
+            only_chinese_core = False
 
             annotation_filter_col1, annotation_filter_col2, annotation_filter_col3 = st.columns(3)
 
@@ -4964,6 +4982,7 @@ with library_tab:
                 selected_jcr_quartiles=selected_jcr_quartiles,
                 selected_sjr_quartiles=selected_sjr_quartiles,
                 selected_cssci=selected_cssci,
+                selected_ssci=selected_ssci,
                 selected_chinese_core=selected_chinese_core,
                 selected_school_tiers=selected_school_tiers,
                 selected_custom_ratings=selected_custom_ratings,
@@ -4975,6 +4994,7 @@ with library_tab:
                 only_jcr_q1=only_jcr_q1,
                 only_sjr_q1=only_sjr_q1,
                 only_cssci=only_cssci,
+                only_ssci=only_ssci,
                 only_chinese_core=only_chinese_core,
                 selected_reading_status=selected_reading_status,
                 selected_priorities=selected_priorities,
@@ -4991,17 +5011,11 @@ with library_tab:
                 "Journal / Venue",
                 "AJG Rating",
                 "AJG Field",
-                "AJG Source Year",
                 "FT50",
                 "ABDC Rating",
-                "ABDC Field",
                 "JCR Quartile",
                 "SJR Quartile",
-                "CSSCI",
-                "Chinese Core",
-                "School Tier",
-                "Custom Rating",
-                "Ranking Tags",
+                "SSCI",
                 "Reading Status",
                 "Paper Type",
                 "Priority",
@@ -5011,12 +5025,7 @@ with library_tab:
                 "Notes",
                 "DOI",
                 "ISSN",
-                "Matched Journal",
                 "Ranking Match Status",
-                "Match Method",
-                "Match Score",
-                "Ranking Source",
-                "Ranking Match Note",
                 "Entry Type",
                 "Annotation ID",
             ]
@@ -5083,6 +5092,34 @@ with library_tab:
             update_annotation_store(edited_library_df)
             library_df = apply_annotation_store(library_df)
             filtered_library_df = apply_annotation_store(filtered_library_df)
+
+            advanced_columns = [
+                "Citation Key",
+                "Journal / Venue",
+                "AJG Source Year",
+                "SSCI Categories",
+                "Custom Rating",
+                "Ranking Tags",
+                "Matched Journal",
+                "Match Method",
+                "Match Score",
+                "Ranking Source",
+                "Ranking Match Note",
+                "Annotation ID",
+            ]
+            advanced_columns = [col for col in advanced_columns if col in filtered_library_df.columns]
+
+            with st.expander("Advanced ranking and matching details", expanded=False):
+                st.caption(
+                    "These columns are hidden from the main table to keep the default view focused. "
+                    "Use them for source checking, debugging fuzzy matches, and optional custom/private rating information."
+                )
+                if advanced_columns:
+                    st.dataframe(
+                        filtered_library_df[advanced_columns],
+                        use_container_width=True,
+                        hide_index=True,
+                    )
 
             st.divider()
 
@@ -5291,8 +5328,7 @@ with library_tab:
                 ("abdc_distribution", make_count_table(dashboard_df, "ABDC Rating", empty_label="No ABDC rating")),
                 ("jcr_quartile", make_count_table(dashboard_df, "JCR Quartile", empty_label="No JCR quartile")),
                 ("sjr_quartile", make_count_table(dashboard_df, "SJR Quartile", empty_label="No SJR quartile")),
-                ("cssci", make_count_table(dashboard_df, "CSSCI", empty_label="No CSSCI flag")),
-                ("chinese_core", make_count_table(dashboard_df, "Chinese Core", empty_label="No Chinese-core flag")),
+                ("ssci", make_count_table(dashboard_df, "SSCI", empty_label="No SSCI flag")),
                 ("reading_status", make_count_table(dashboard_df, "Reading Status", empty_label="Unspecified")),
                 ("priority", make_count_table(dashboard_df, "Priority", empty_label="Unspecified")),
                 ("paper_type", make_count_table(dashboard_df, "Paper Type", empty_label="Unspecified")),
