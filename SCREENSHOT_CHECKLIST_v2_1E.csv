@@ -1,0 +1,12 @@
+filename,section,what_to_show,priority
+home.png,Home/header,"App title, version badge, tabs, feature cards",High
+single-doi.png,Single DOI,"DOI input, BibTeX output, download button",Medium
+batch-merge.png,Batch + Merge,Multiple DOI processing and summary metrics,Medium
+title-search.png,Title Search,Title search input and Crossref candidates,Medium
+cleaner.png,BibTeX Cleaner,Raw input and cleaned BibTeX output,Medium
+quality-report.png,Quality Report,Issue summary and metadata quality table,Medium
+research-library.png,Research Library,Library metrics and searchable reference table,High
+ajg-ranking.png,AJG/ABS Ranking,Matched/unmatched metrics and AJG/FT50 columns,High
+annotation-dashboard.png,Annotations,"Reading status, tags, notes, priority, citation flags",High
+restore-annotations.png,Restore Annotations,Upload previous annotated CSV and restore workflow,Medium
+literature-review-report.png,Report Export,Dashboard/report tables and markdown export,High

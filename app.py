@@ -1,9 +1,22 @@
 import re
+from datetime import datetime
 import requests
+import pandas as pd
 import streamlit as st
 import bibtexparser
 from bibtexparser.bwriter import BibTexWriter
 from bibtexparser.bibdatabase import BibDatabase
+
+from pathlib import Path
+from difflib import SequenceMatcher
+
+# ============================================================
+# Private ranking file paths
+# ============================================================
+
+
+PRIVATE_RANKING_PATH = Path("data/private/journal_rankings_combined_for_bibflow.csv")
+DEMO_RANKING_PATH = Path("examples/sample_journal_rankings_demo.csv")
 
 
 # ============================================================
@@ -21,9 +34,9 @@ st.set_page_config(
 # App branding and UI helpers
 # ============================================================
 
-APP_VERSION = "1.7"
+APP_VERSION = "2.0F"
 APP_NAME = "BibFlow"
-APP_TAGLINE = "A Streamlit Assistant for Zotero–Overleaf BibTeX Workflows"
+APP_TAGLINE = "A polished research library assistant for BibTeX, Overleaf, journal rankings, and literature review workflows"
 
 
 EXPORT_PRESETS = {
@@ -257,9 +270,9 @@ def render_header():
         st.markdown(
             """
             <div class="feature-card">
-                <div class="feature-card-title">Cleaner + Quality Report</div>
+                <div class="feature-card-title">Library + Dashboard</div>
                 <div class="feature-card-text">
-                    Clean raw BibTeX and check whether your references file is Overleaf-ready.
+                    Explore references, match rankings, restore notes, and export literature-review reports.
                 </div>
             </div>
             """,
@@ -276,12 +289,13 @@ def render_header():
             ```text
             Zotero / DOI / paper title / raw BibTeX
             → BibFlow
-            → clean Overleaf-ready references.bib
-            → LaTeX writing
+            → clean references.bib + annotated research library
+            → Overleaf writing + literature-review planning
             ```
 
             It helps reduce repetitive manual work such as copying BibTeX from Google Scholar,
-            fixing citation keys, removing noisy fields, and checking duplicate references.
+            fixing citation keys, removing noisy fields, checking duplicate references, tracking reading progress,
+            and preparing literature-review summaries.
             """
         )
 
@@ -1270,6 +1284,1598 @@ def summarize_quality_report(report_rows: list) -> dict:
 
 
 # ============================================================
+# Research Library + Journal Ranking helper functions
+# ============================================================
+
+def get_entry_year(entry: dict) -> str:
+    """
+    Extract publication year from a BibTeX entry.
+    """
+    year = clean_text(entry.get("year", "") or entry.get("date", ""))
+
+    year_match = re.search(r"\d{4}", year)
+    if year_match:
+        return year_match.group(0)
+
+    return ""
+
+
+def get_entry_journal(entry: dict) -> str:
+    """
+    Extract journal / venue name from a BibTeX entry.
+    """
+    journal = (
+        entry.get("journal", "")
+        or entry.get("journaltitle", "")
+        or entry.get("booktitle", "")
+        or entry.get("publisher", "")
+    )
+
+    return clean_text(journal)
+
+
+def normalize_issn(value: str) -> str:
+    """
+    Normalize ISSN for matching.
+    """
+    if value is None or pd.isna(value):
+        return ""
+
+    value = str(value).strip().upper()
+    value = re.sub(r"[^0-9X]", "", value)
+
+    return value
+
+
+def get_entry_issn(entry: dict) -> str:
+    """
+    Extract ISSN / eISSN from BibTeX entry if available.
+    """
+    issn = (
+        entry.get("issn", "")
+        or entry.get("eissn", "")
+        or entry.get("e-issn", "")
+        or entry.get("printissn", "")
+        or entry.get("print_issn", "")
+    )
+
+    return normalize_issn(issn)
+
+
+def get_entry_authors_short(entry: dict, max_authors: int = 3) -> str:
+    """
+    Convert BibTeX author field into a readable short author string.
+    """
+    author_field = clean_text(entry.get("author", ""))
+
+    if not author_field:
+        return ""
+
+    authors = [a.strip() for a in author_field.split(" and ") if a.strip()]
+
+    formatted_authors = []
+
+    for author in authors[:max_authors]:
+        if "," in author:
+            last, first = author.split(",", 1)
+            formatted_authors.append(f"{first.strip()} {last.strip()}".strip())
+        else:
+            formatted_authors.append(author)
+
+    if len(authors) > max_authors:
+        formatted_authors.append("et al.")
+
+    return ", ".join(formatted_authors)
+
+
+def normalize_journal_name_for_matching(name: str) -> str:
+    """
+    Normalize journal names for ranking matching.
+    """
+    if name is None or pd.isna(name):
+        return ""
+
+    name = str(name).lower().strip()
+
+    name = name.replace("&", " and ")
+    name = name.replace("{", "").replace("}", "")
+
+    # Remove leading article
+    name = re.sub(r"^the\s+", "", name)
+
+    # Remove punctuation
+    name = re.sub(r"[^a-z0-9\s]", " ", name)
+
+    # Collapse spaces
+    name = re.sub(r"\s+", " ", name).strip()
+
+    return name
+
+
+def normalize_column_name(col: str) -> str:
+    """
+    Normalize dataframe column names for flexible detection.
+    """
+    return re.sub(r"[^a-z0-9]", "", str(col).lower())
+
+
+def find_column(df: pd.DataFrame, candidates: list) -> str:
+    """
+    Find a column from possible candidate names.
+    """
+    normalized_cols = {
+        normalize_column_name(col): col
+        for col in df.columns
+    }
+
+    normalized_candidates = [normalize_column_name(c) for c in candidates]
+
+    for candidate in normalized_candidates:
+        if candidate in normalized_cols:
+            return normalized_cols[candidate]
+
+    for norm_col, original_col in normalized_cols.items():
+        for candidate in normalized_candidates:
+            if candidate and candidate in norm_col:
+                return original_col
+
+    return ""
+
+
+def standardize_ajg_rating(value: str) -> str:
+    """
+    Standardize AJG rating values.
+    """
+    if value is None or pd.isna(value):
+        return ""
+
+    value = str(value).strip().upper()
+    value = value.replace(" ", "")
+
+    if value in ["4*", "4STAR", "4STARS", "4-STAR", "4-STARS"]:
+        return "4*"
+
+    if value in ["4", "3", "2", "1"]:
+        return value
+
+    return value
+
+
+def rating_value(rating: str) -> int:
+    """
+    Convert AJG rating to numeric order for filtering.
+    """
+    rating = str(rating).strip()
+
+    mapping = {
+        "4*": 5,
+        "4": 4,
+        "3": 3,
+        "2": 2,
+        "1": 1,
+    }
+
+    return mapping.get(rating, 0)
+
+
+def standardize_yes_no(value: str) -> str:
+    """
+    Standardize FT50 indicator.
+    """
+    if value is None or pd.isna(value):
+        return ""
+
+    value = str(value).strip().lower()
+
+    if value in ["yes", "y", "true", "1", "ft50"]:
+        return "Yes"
+
+    return ""
+
+
+def load_ranking_file(uploaded_file) -> pd.DataFrame:
+    """
+    Load uploaded ranking file.
+
+    Supported:
+    - CSV
+    - XLSX
+    - XLS
+    """
+    file_name = uploaded_file.name.lower()
+
+    if file_name.endswith(".csv"):
+        try:
+            return pd.read_csv(uploaded_file)
+        except UnicodeDecodeError:
+            uploaded_file.seek(0)
+            return pd.read_csv(uploaded_file, encoding="latin1")
+
+    if file_name.endswith(".xlsx") or file_name.endswith(".xls"):
+        return pd.read_excel(uploaded_file)
+
+    raise ValueError("Unsupported ranking file format. Please upload CSV, XLSX, or XLS.")
+
+
+def load_default_ranking_file() -> tuple:
+    """
+    Load a default journal ranking file if available.
+
+    Priority:
+    1. Private full ranking file
+    2. Public demo ranking file
+    3. No ranking file
+
+    Returns:
+    - raw dataframe or None
+    - source label
+    - source type
+    """
+    if PRIVATE_RANKING_PATH.exists():
+        raw_df = pd.read_csv(PRIVATE_RANKING_PATH)
+        return raw_df, str(PRIVATE_RANKING_PATH), "private"
+
+    if DEMO_RANKING_PATH.exists():
+        raw_df = pd.read_csv(DEMO_RANKING_PATH)
+        return raw_df, str(DEMO_RANKING_PATH), "demo"
+
+    return None, "", "none"
+
+
+def standardize_ranking_dataframe(raw_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Standardize AJG + FT50 ranking data.
+
+    Works with the cleaned combined file:
+
+    journal
+    journal_normalized
+    journal_alias_normalized
+    issn
+    ajg_rating
+    ajg_field
+    ajg_source_year
+    ft50
+    ft50_issn
+    ft50_title
+    match_note
+    """
+    df = raw_df.copy()
+
+    journal_col = find_column(
+        df,
+        [
+            "journal",
+            "journal title",
+            "journal_title",
+            "title",
+            "ttitle",
+            "source title",
+            "publication",
+        ],
+    )
+
+    journal_norm_col = find_column(
+        df,
+        [
+            "journal_normalized",
+            "journal normalized",
+            "ranking journal normalized",
+        ],
+    )
+
+    journal_alias_col = find_column(
+        df,
+        [
+            "journal_alias_normalized",
+            "journal alias normalized",
+            "alias normalized",
+        ],
+    )
+
+    issn_col = find_column(
+        df,
+        [
+            "issn",
+            "print issn",
+            "print_issn",
+            "eissn",
+            "e-issn",
+            "online issn",
+        ],
+    )
+
+    ajg_col = find_column(
+        df,
+        [
+            "ajg_rating",
+            "ajg rating",
+            "ajg2024",
+            "ajg_2024",
+            "abs_rating",
+            "abs rank",
+            "abs_rank",
+            "rating",
+            "grade",
+            "rank",
+        ],
+    )
+
+    field_col = find_column(
+        df,
+        [
+            "ajg_field",
+            "ajg field",
+            "field",
+            "subject",
+            "subject area",
+            "category",
+            "area",
+            "discipline",
+        ],
+    )
+
+    source_year_col = find_column(
+        df,
+        [
+            "ajg_source_year",
+            "source_year",
+            "source year",
+            "year",
+            "ajg_year",
+            "ajg year",
+        ],
+    )
+
+    ft50_col = find_column(
+        df,
+        [
+            "ft50",
+            "ft_50",
+            "financial times 50",
+            "financial_times_50",
+        ],
+    )
+
+    ft50_issn_col = find_column(
+        df,
+        [
+            "ft50_issn",
+            "ft50 issn",
+            "ft_50_issn",
+        ],
+    )
+
+    ft50_title_col = find_column(
+        df,
+        [
+            "ft50_title",
+            "ft50 title",
+            "ft_50_title",
+        ],
+    )
+
+    match_note_col = find_column(
+        df,
+        [
+            "match_note",
+            "match note",
+            "note",
+            "notes",
+        ],
+    )
+
+    ranking_source_col = find_column(
+        df,
+        [
+            "ranking_source",
+            "ranking source",
+            "source",
+        ],
+    )
+
+    if not journal_col:
+        raise ValueError(
+            "Could not find the journal title column. "
+            "Please include a column such as 'journal', 'journal_title', 'title', or 'Ttitle'."
+        )
+
+    standardized = pd.DataFrame()
+
+    standardized["Ranking Journal"] = df[journal_col].fillna("").astype(str).str.strip()
+
+    if journal_norm_col:
+        standardized["Ranking Journal Normalized"] = (
+            df[journal_norm_col]
+            .fillna("")
+            .astype(str)
+            .apply(normalize_journal_name_for_matching)
+        )
+    else:
+        standardized["Ranking Journal Normalized"] = standardized["Ranking Journal"].apply(
+            normalize_journal_name_for_matching
+        )
+
+    if journal_alias_col:
+        standardized["Ranking Journal Alias Normalized"] = (
+            df[journal_alias_col]
+            .fillna("")
+            .astype(str)
+            .apply(normalize_journal_name_for_matching)
+        )
+    else:
+        standardized["Ranking Journal Alias Normalized"] = standardized[
+            "Ranking Journal Normalized"
+        ]
+
+    if issn_col:
+        standardized["ISSN"] = df[issn_col].apply(normalize_issn)
+    else:
+        standardized["ISSN"] = ""
+
+    if ajg_col:
+        standardized["AJG Rating"] = df[ajg_col].apply(standardize_ajg_rating)
+    else:
+        standardized["AJG Rating"] = ""
+
+    if field_col:
+        standardized["AJG Field"] = df[field_col].fillna("").astype(str).str.strip()
+    else:
+        standardized["AJG Field"] = ""
+
+    if source_year_col:
+        standardized["AJG Source Year"] = (
+            df[source_year_col]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+        )
+    else:
+        standardized["AJG Source Year"] = ""
+
+    if ft50_col:
+        standardized["FT50"] = df[ft50_col].apply(standardize_yes_no)
+    else:
+        standardized["FT50"] = ""
+
+    if ft50_issn_col:
+        standardized["FT50 ISSN"] = df[ft50_issn_col].apply(normalize_issn)
+    else:
+        standardized["FT50 ISSN"] = ""
+
+    if ft50_title_col:
+        standardized["FT50 Title"] = df[ft50_title_col].fillna("").astype(str).str.strip()
+    else:
+        standardized["FT50 Title"] = ""
+
+    if match_note_col:
+        standardized["Ranking Match Note"] = df[match_note_col].fillna("").astype(str).str.strip()
+    else:
+        standardized["Ranking Match Note"] = ""
+
+    if ranking_source_col:
+        standardized["Ranking Source"] = df[ranking_source_col].fillna("").astype(str).str.strip()
+    else:
+        standardized["Ranking Source"] = ""
+
+    standardized = standardized[
+        standardized["Ranking Journal Normalized"].str.len() > 0
+    ].copy()
+
+    standardized = standardized.drop_duplicates(
+        subset=["Ranking Journal Normalized"],
+        keep="first"
+    )
+
+    return standardized
+
+
+def bibtex_entries_to_library_rows(entries: list) -> list:
+    """
+    Convert BibTeX entries into rows for the Research Library table.
+    """
+    rows = []
+
+    for entry in entries:
+        citation_key = entry.get("ID", "")
+        entry_type = entry.get("ENTRYTYPE", "")
+        title = clean_text(entry.get("title", ""))
+        authors = get_entry_authors_short(entry)
+        year = get_entry_year(entry)
+        journal = get_entry_journal(entry)
+        doi = normalize_doi(entry.get("doi", ""))
+        issn = get_entry_issn(entry)
+
+        rows.append(
+            {
+                "Citation Key": citation_key,
+                "Entry Type": entry_type,
+                "Title": title,
+                "Authors": authors,
+                "Year": year,
+                "Journal / Venue": journal,
+                "Journal Normalized": normalize_journal_name_for_matching(journal),
+                "DOI": doi,
+                "ISSN": issn,
+
+                # Ranking columns
+                "AJG Rating": "",
+                "AJG Field": "",
+                "AJG Source Year": "",
+                "FT50": "",
+                "Matched Journal": "",
+                "Ranking Match Status": "No ranking file loaded",
+                "Match Method": "",
+                "Match Score": "",
+                "Ranking Source": "",
+                "Ranking Match Note": "",
+            }
+        )
+
+    return rows
+
+
+def match_library_with_ranking(
+    library_df: pd.DataFrame,
+    ranking_df: pd.DataFrame,
+    fuzzy_threshold: float = 0.92,
+    enable_fuzzy_matching: bool = True,
+) -> pd.DataFrame:
+    """
+    Match Research Library references with journal ranking data.
+
+    Priority:
+    1. ISSN exact match
+    2. FT50 ISSN exact match
+    3. Exact normalized journal-name match
+    4. Exact alias-normalized journal-name match
+    5. Conservative fuzzy journal-name match
+    """
+    enriched = library_df.copy()
+
+    if ranking_df is None or ranking_df.empty:
+        return enriched
+
+    ranking_by_journal = (
+        ranking_df
+        .drop_duplicates(subset=["Ranking Journal Normalized"], keep="first")
+        .set_index("Ranking Journal Normalized")
+        .to_dict(orient="index")
+    )
+
+    ranking_by_alias = (
+        ranking_df
+        .drop_duplicates(subset=["Ranking Journal Alias Normalized"], keep="first")
+        .set_index("Ranking Journal Alias Normalized")
+        .to_dict(orient="index")
+    )
+
+    ranking_by_issn = {}
+
+    if "ISSN" in ranking_df.columns:
+        issn_df = ranking_df[
+            ranking_df["ISSN"].fillna("").astype(str).str.len() > 0
+        ].copy()
+
+        if not issn_df.empty:
+            ranking_by_issn.update(
+                issn_df
+                .drop_duplicates(subset=["ISSN"], keep="first")
+                .set_index("ISSN")
+                .to_dict(orient="index")
+            )
+
+    if "FT50 ISSN" in ranking_df.columns:
+        ft50_issn_df = ranking_df[
+            ranking_df["FT50 ISSN"].fillna("").astype(str).str.len() > 0
+        ].copy()
+
+        if not ft50_issn_df.empty:
+            ranking_by_issn.update(
+                ft50_issn_df
+                .drop_duplicates(subset=["FT50 ISSN"], keep="first")
+                .set_index("FT50 ISSN")
+                .to_dict(orient="index")
+            )
+
+    ranking_journal_keys = list(ranking_by_journal.keys())
+
+    for idx, row in enriched.iterrows():
+        journal_norm = row.get("Journal Normalized", "")
+        issn = row.get("ISSN", "")
+
+        matched = None
+        match_method = ""
+        match_score = ""
+
+        if issn and issn in ranking_by_issn:
+            matched = ranking_by_issn[issn]
+            match_method = "ISSN exact"
+            match_score = "1.00"
+
+        elif journal_norm and journal_norm in ranking_by_journal:
+            matched = ranking_by_journal[journal_norm]
+            match_method = "Journal exact"
+            match_score = "1.00"
+
+        elif journal_norm and journal_norm in ranking_by_alias:
+            matched = ranking_by_alias[journal_norm]
+            match_method = "Journal alias exact"
+            match_score = "1.00"
+
+        elif enable_fuzzy_matching and journal_norm:
+            best_key = ""
+            best_score = 0.0
+
+            for candidate_key in ranking_journal_keys:
+                score = SequenceMatcher(None, journal_norm, candidate_key).ratio()
+
+                if score > best_score:
+                    best_score = score
+                    best_key = candidate_key
+
+            if best_key and best_score >= fuzzy_threshold:
+                matched = ranking_by_journal[best_key]
+                match_method = "Journal fuzzy"
+                match_score = f"{best_score:.2f}"
+
+        if matched:
+            enriched.at[idx, "AJG Rating"] = matched.get("AJG Rating", "")
+            enriched.at[idx, "AJG Field"] = matched.get("AJG Field", "")
+            enriched.at[idx, "AJG Source Year"] = matched.get("AJG Source Year", "")
+            enriched.at[idx, "FT50"] = matched.get("FT50", "")
+            enriched.at[idx, "Matched Journal"] = matched.get("Ranking Journal", "")
+            enriched.at[idx, "Ranking Match Status"] = "Matched"
+            enriched.at[idx, "Match Method"] = match_method
+            enriched.at[idx, "Match Score"] = match_score
+            enriched.at[idx, "Ranking Source"] = matched.get("Ranking Source", "")
+            enriched.at[idx, "Ranking Match Note"] = matched.get("Ranking Match Note", "")
+        else:
+            enriched.at[idx, "Ranking Match Status"] = "Unmatched"
+            enriched.at[idx, "Match Method"] = ""
+            enriched.at[idx, "Match Score"] = ""
+
+    return enriched
+
+
+def filter_library_dataframe(
+    df: pd.DataFrame,
+    search_text: str = "",
+    selected_years: list = None,
+    selected_journals: list = None,
+    selected_entry_types: list = None,
+    selected_ajg_ratings: list = None,
+    selected_ft50: list = None,
+    selected_match_status: list = None,
+    only_ajg_3_plus: bool = False,
+    only_ft50: bool = False,
+    selected_reading_status: list = None,
+    selected_priorities: list = None,
+    selected_paper_types: list = None,
+    only_citation_candidates: bool = False,
+    only_important: bool = False,
+) -> pd.DataFrame:
+    """
+    Apply search and filters to the Research Library dataframe.
+    """
+    filtered = df.copy()
+
+    if search_text.strip():
+        search_cols = [
+            "Citation Key",
+            "Title",
+            "Authors",
+            "Year",
+            "Journal / Venue",
+            "DOI",
+            "ISSN",
+            "Entry Type",
+            "AJG Rating",
+            "AJG Field",
+            "FT50",
+            "Matched Journal",
+            "Ranking Match Status",
+            "Reading Status",
+            "Paper Type",
+            "Priority",
+            "Research Tags",
+            "Notes",
+        ]
+
+        search_cols = [col for col in search_cols if col in filtered.columns]
+
+        search_blob = (
+            filtered[search_cols]
+            .fillna("")
+            .astype(str)
+            .agg(" ".join, axis=1)
+            .str.lower()
+        )
+
+        filtered = filtered[
+            search_blob.str.contains(search_text.strip().lower(), regex=False)
+        ]
+
+    if selected_years:
+        filtered = filtered[filtered["Year"].isin(selected_years)]
+
+    if selected_journals:
+        filtered = filtered[filtered["Journal / Venue"].isin(selected_journals)]
+
+    if selected_entry_types:
+        filtered = filtered[filtered["Entry Type"].isin(selected_entry_types)]
+
+    if selected_ajg_ratings:
+        filtered = filtered[filtered["AJG Rating"].isin(selected_ajg_ratings)]
+
+    if selected_ft50:
+        filtered = filtered[filtered["FT50"].isin(selected_ft50)]
+
+    if selected_match_status:
+        filtered = filtered[filtered["Ranking Match Status"].isin(selected_match_status)]
+
+    if only_ajg_3_plus:
+        filtered = filtered[
+            filtered["AJG Rating"].apply(rating_value) >= rating_value("3")
+        ]
+
+    if only_ft50:
+        filtered = filtered[filtered["FT50"] == "Yes"]
+
+    if selected_reading_status:
+        filtered = filtered[filtered["Reading Status"].isin(selected_reading_status)]
+
+    if selected_priorities:
+        filtered = filtered[filtered["Priority"].isin(selected_priorities)]
+
+    if selected_paper_types:
+        filtered = filtered[filtered["Paper Type"].isin(selected_paper_types)]
+
+    if only_citation_candidates:
+        filtered = filtered[filtered["Citation Candidate"].astype(bool)]
+
+    if only_important:
+        filtered = filtered[filtered["Important"].astype(bool)]
+
+    return filtered
+
+
+def summarize_research_library(df: pd.DataFrame) -> dict:
+    """
+    Build simple summary statistics for the Research Library tab.
+    """
+    total_references = len(df)
+
+    doi_count = 0
+    missing_doi_count = 0
+    journal_count = 0
+    year_range = "N/A"
+
+    if total_references > 0:
+        doi_count = df["DOI"].fillna("").astype(str).str.strip().ne("").sum()
+        missing_doi_count = total_references - doi_count
+
+        journal_count = (
+            df["Journal / Venue"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+            .replace("", pd.NA)
+            .dropna()
+            .nunique()
+        )
+
+        years = (
+            df["Year"]
+            .fillna("")
+            .astype(str)
+            .str.extract(r"(\d{4})")[0]
+            .dropna()
+            .astype(int)
+        )
+
+        if not years.empty:
+            year_range = f"{years.min()}–{years.max()}"
+
+    return {
+        "total_references": total_references,
+        "doi_count": int(doi_count),
+        "missing_doi_count": int(missing_doi_count),
+        "journal_count": int(journal_count),
+        "year_range": year_range,
+    }
+
+
+def summarize_ranking_matches(df: pd.DataFrame) -> dict:
+    """
+    Summarize AJG / FT50 matching results.
+    """
+    total = len(df)
+
+    matched = 0
+    unmatched = 0
+    ajg_3_plus = 0
+    ajg_4_plus = 0
+    ft50_count = 0
+
+    if total > 0:
+        matched = (df["Ranking Match Status"] == "Matched").sum()
+        unmatched = (df["Ranking Match Status"] == "Unmatched").sum()
+        ajg_3_plus = df["AJG Rating"].apply(rating_value).ge(3).sum()
+        ajg_4_plus = df["AJG Rating"].apply(rating_value).ge(4).sum()
+        ft50_count = (df["FT50"] == "Yes").sum()
+
+    return {
+        "matched": int(matched),
+        "unmatched": int(unmatched),
+        "ajg_3_plus": int(ajg_3_plus),
+        "ajg_4_plus": int(ajg_4_plus),
+        "ft50_count": int(ft50_count),
+    }
+
+
+
+# ============================================================
+# Research annotation helper functions
+# ============================================================
+
+READING_STATUS_OPTIONS = [
+    "Unread",
+    "Reading",
+    "Read",
+    "To revisit",
+    "Skimmed",
+]
+
+PRIORITY_OPTIONS = [
+    "Low",
+    "Medium",
+    "High",
+    "Core paper",
+]
+
+PAPER_TYPE_OPTIONS = [
+    "",
+    "Methodology paper",
+    "Theory paper",
+    "Empirical paper",
+    "Literature review",
+    "Dataset paper",
+    "Application paper",
+    "Background reading",
+]
+
+ANNOTATION_COLUMNS = [
+    "Reading Status",
+    "Paper Type",
+    "Priority",
+    "Research Tags",
+    "Citation Candidate",
+    "Important",
+    "Notes",
+]
+
+
+def build_annotation_id(row: pd.Series) -> str:
+    """
+    Build a stable ID for storing annotations during the Streamlit session.
+
+    Citation Key is preferred. If missing, use title + year + journal.
+    """
+    citation_key = str(row.get("Citation Key", "")).strip()
+
+    if citation_key:
+        base = citation_key
+    else:
+        base = "|".join(
+            [
+                str(row.get("Title", "")).strip(),
+                str(row.get("Year", "")).strip(),
+                str(row.get("Journal / Venue", "")).strip(),
+            ]
+        )
+
+    base = base.lower()
+    base = re.sub(r"[^a-z0-9]+", "_", base)
+    base = re.sub(r"_+", "_", base).strip("_")
+
+    return base
+
+
+def add_annotation_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Add editable annotation columns to the research library dataframe.
+    """
+    annotated = df.copy()
+
+    if "Annotation ID" not in annotated.columns:
+        annotated["Annotation ID"] = annotated.apply(build_annotation_id, axis=1)
+
+    default_values = {
+        "Reading Status": "Unread",
+        "Paper Type": "",
+        "Priority": "Medium",
+        "Research Tags": "",
+        "Citation Candidate": False,
+        "Important": False,
+        "Notes": "",
+    }
+
+    for col, default_value in default_values.items():
+        if col not in annotated.columns:
+            annotated[col] = default_value
+
+    return annotated
+
+
+def initialize_annotation_store() -> None:
+    """
+    Initialize Streamlit session-state storage for annotations.
+    """
+    if "research_library_annotations" not in st.session_state:
+        st.session_state["research_library_annotations"] = {}
+
+
+def apply_annotation_store(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply saved session annotations to the current dataframe.
+    """
+    initialize_annotation_store()
+
+    annotated = df.copy()
+    store = st.session_state["research_library_annotations"]
+
+    for idx, row in annotated.iterrows():
+        annotation_id = row.get("Annotation ID", "")
+
+        if annotation_id in store:
+            for col in ANNOTATION_COLUMNS:
+                if col in store[annotation_id]:
+                    annotated.at[idx, col] = store[annotation_id][col]
+
+    return annotated
+
+
+def update_annotation_store(edited_df: pd.DataFrame) -> None:
+    """
+    Save edited annotations back to Streamlit session state.
+    """
+    initialize_annotation_store()
+
+    store = st.session_state["research_library_annotations"]
+
+    for _, row in edited_df.iterrows():
+        annotation_id = row.get("Annotation ID", "")
+
+        if not annotation_id:
+            annotation_id = build_annotation_id(row)
+
+        if not annotation_id:
+            continue
+
+        store[annotation_id] = {
+            col: row.get(col, "")
+            for col in ANNOTATION_COLUMNS
+            if col in edited_df.columns
+        }
+
+    st.session_state["research_library_annotations"] = store
+
+
+def summarize_annotations(df: pd.DataFrame) -> dict:
+    """
+    Summarize reading and annotation progress.
+    """
+    if df.empty:
+        return {
+            "read": 0,
+            "reading": 0,
+            "important": 0,
+            "citation_candidates": 0,
+            "core_papers": 0,
+        }
+
+    read_count = (df["Reading Status"] == "Read").sum()
+    reading_count = (df["Reading Status"] == "Reading").sum()
+    important_count = df["Important"].astype(bool).sum()
+    citation_candidates = df["Citation Candidate"].astype(bool).sum()
+    core_papers = (df["Priority"] == "Core paper").sum()
+
+    return {
+        "read": int(read_count),
+        "reading": int(reading_count),
+        "important": int(important_count),
+        "citation_candidates": int(citation_candidates),
+        "core_papers": int(core_papers),
+    }
+
+
+
+# ============================================================
+# Research dashboard and report helper functions
+# ============================================================
+
+def make_count_table(
+    df: pd.DataFrame,
+    column: str,
+    empty_label: str = "Unspecified",
+    order: list = None,
+) -> pd.DataFrame:
+    """
+    Build a count table for dashboard summaries.
+    """
+    if df.empty or column not in df.columns:
+        return pd.DataFrame(columns=[column, "Count", "Share (%)"])
+
+    values = df[column].fillna("").astype(str).str.strip()
+    values = values.replace("", empty_label)
+
+    count_df = values.value_counts(dropna=False).reset_index()
+    count_df.columns = [column, "Count"]
+
+    total = int(count_df["Count"].sum())
+    if total > 0:
+        count_df["Share (%)"] = (count_df["Count"] / total * 100).round(1)
+    else:
+        count_df["Share (%)"] = 0.0
+
+    if order:
+        order_map = {value: idx for idx, value in enumerate(order)}
+        count_df["_order"] = count_df[column].map(order_map).fillna(len(order) + 1)
+        count_df = count_df.sort_values(["_order", "Count"], ascending=[True, False])
+        count_df = count_df.drop(columns=["_order"])
+
+    return count_df.reset_index(drop=True)
+
+
+def make_tag_frequency_table(
+    df: pd.DataFrame,
+    tag_col: str = "Research Tags",
+    top_n: int = 20,
+) -> pd.DataFrame:
+    """
+    Split comma/semicolon-separated research tags and build a frequency table.
+    """
+    if df.empty or tag_col not in df.columns:
+        return pd.DataFrame(columns=["Research Tag", "Count"])
+
+    tag_counts = {}
+
+    for raw_tags in df[tag_col].fillna("").astype(str):
+        raw_tags = raw_tags.replace(";", ",")
+        tags = [tag.strip().lower() for tag in raw_tags.split(",") if tag.strip()]
+
+        for tag in tags:
+            tag_counts[tag] = tag_counts.get(tag, 0) + 1
+
+    if not tag_counts:
+        return pd.DataFrame(columns=["Research Tag", "Count"])
+
+    tag_df = pd.DataFrame(
+        sorted(tag_counts.items(), key=lambda item: item[1], reverse=True),
+        columns=["Research Tag", "Count"],
+    )
+
+    return tag_df.head(top_n).reset_index(drop=True)
+
+
+def make_top_journal_table(df: pd.DataFrame, top_n: int = 15) -> pd.DataFrame:
+    """
+    Build a top-journals table with AJG/FT50 context.
+    """
+    required_col = "Journal / Venue"
+
+    if df.empty or required_col not in df.columns:
+        return pd.DataFrame(columns=["Journal / Venue", "Count", "Best AJG Rating", "FT50"])
+
+    working = df.copy()
+    working[required_col] = working[required_col].fillna("").astype(str).str.strip()
+    working = working[working[required_col] != ""]
+
+    if working.empty:
+        return pd.DataFrame(columns=["Journal / Venue", "Count", "Best AJG Rating", "FT50"])
+
+    rows = []
+
+    for journal, group in working.groupby(required_col):
+        ratings = group.get("AJG Rating", pd.Series(dtype=str)).fillna("").astype(str).tolist()
+        best_rating = ""
+        best_value = -1
+
+        for rating in ratings:
+            value = rating_value(rating)
+            if value > best_value:
+                best_value = value
+                best_rating = rating
+
+        ft50_flag = "Yes" if "FT50" in group.columns and (group["FT50"] == "Yes").any() else ""
+
+        rows.append(
+            {
+                "Journal / Venue": journal,
+                "Count": len(group),
+                "Best AJG Rating": best_rating,
+                "FT50": ft50_flag,
+            }
+        )
+
+    top_df = pd.DataFrame(rows)
+    top_df = top_df.sort_values(["Count", "Journal / Venue"], ascending=[False, True])
+
+    return top_df.head(top_n).reset_index(drop=True)
+
+
+def make_focus_paper_table(
+    df: pd.DataFrame,
+    condition_col: str = None,
+    condition_value=True,
+    max_rows: int = 20,
+) -> pd.DataFrame:
+    """
+    Build a compact table for important/core/citation-candidate papers.
+    """
+    if df.empty:
+        return pd.DataFrame()
+
+    working = df.copy()
+
+    if condition_col and condition_col in working.columns:
+        if isinstance(condition_value, bool):
+            working = working[working[condition_col].astype(bool) == condition_value]
+        else:
+            working = working[working[condition_col] == condition_value]
+
+    columns = [
+        "Citation Key",
+        "Title",
+        "Year",
+        "Journal / Venue",
+        "AJG Rating",
+        "FT50",
+        "Reading Status",
+        "Priority",
+        "Paper Type",
+        "Research Tags",
+        "Notes",
+    ]
+
+    columns = [col for col in columns if col in working.columns]
+
+    if working.empty:
+        return pd.DataFrame(columns=columns)
+
+    if "Year" in working.columns:
+        working = working.sort_values("Year", ascending=False)
+
+    return working[columns].head(max_rows).reset_index(drop=True)
+
+
+def dataframe_to_simple_markdown(df: pd.DataFrame, max_rows: int = 20) -> str:
+    """
+    Convert a small dataframe into a simple markdown table without requiring tabulate.
+    """
+    if df is None or df.empty:
+        return "_No records._"
+
+    display_df = df.head(max_rows).fillna("").astype(str)
+
+    def clean_cell(value: str) -> str:
+        value = str(value).replace("|", "\\|")
+        value = re.sub(r"\s+", " ", value).strip()
+        return value
+
+    columns = list(display_df.columns)
+    header = "| " + " | ".join(clean_cell(col) for col in columns) + " |"
+    separator = "| " + " | ".join(["---"] * len(columns)) + " |"
+
+    rows = []
+    for _, row in display_df.iterrows():
+        rows.append("| " + " | ".join(clean_cell(row[col]) for col in columns) + " |")
+
+    return "\n".join([header, separator] + rows)
+
+
+def build_literature_review_report(df: pd.DataFrame, scope_label: str = "Filtered library") -> str:
+    """
+    Build a downloadable markdown report for the current research library view.
+    """
+    working = df.copy()
+
+    summary = summarize_research_library(working)
+    ranking_summary = summarize_ranking_matches(working)
+    annotation_summary = summarize_annotations(working)
+
+    ajg_table = make_count_table(
+        working,
+        "AJG Rating",
+        empty_label="Unmatched / No AJG rating",
+        order=["4*", "4", "3", "2", "1", "Unmatched / No AJG rating"],
+    )
+    reading_table = make_count_table(working, "Reading Status", empty_label="Unspecified")
+    priority_table = make_count_table(working, "Priority", empty_label="Unspecified")
+    paper_type_table = make_count_table(working, "Paper Type", empty_label="Unspecified")
+    field_table = make_count_table(working, "AJG Field", empty_label="Unspecified field")
+    tag_table = make_tag_frequency_table(working, top_n=20)
+    top_journals = make_top_journal_table(working, top_n=15)
+    citation_candidates = make_focus_paper_table(
+        working,
+        condition_col="Citation Candidate",
+        condition_value=True,
+        max_rows=20,
+    )
+    core_papers = make_focus_paper_table(
+        working,
+        condition_col="Priority",
+        condition_value="Core paper",
+        max_rows=20,
+    )
+    important_papers = make_focus_paper_table(
+        working,
+        condition_col="Important",
+        condition_value=True,
+        max_rows=20,
+    )
+
+    report = f"""# BibFlow Literature Review Report
+
+**Scope:** {scope_label}  
+**Generated by:** BibFlow Version {APP_VERSION}
+
+## 1. Library Overview
+
+- Total references: {summary['total_references']}
+- References with DOI: {summary['doi_count']}
+- References missing DOI: {summary['missing_doi_count']}
+- Unique journals / venues: {summary['journal_count']}
+- Year range: {summary['year_range']}
+
+## 2. Journal Ranking Overview
+
+- Matched journals: {ranking_summary['matched']}
+- Unmatched journals: {ranking_summary['unmatched']}
+- AJG 3+ references: {ranking_summary['ajg_3_plus']}
+- AJG 4 / 4* references: {ranking_summary['ajg_4_plus']}
+- FT50 references: {ranking_summary['ft50_count']}
+
+### AJG Rating Distribution
+
+{dataframe_to_simple_markdown(ajg_table)}
+
+### AJG Field Distribution
+
+{dataframe_to_simple_markdown(field_table)}
+
+### Top Journals / Venues
+
+{dataframe_to_simple_markdown(top_journals)}
+
+## 3. Reading Progress
+
+- Read: {annotation_summary['read']}
+- Reading: {annotation_summary['reading']}
+- Important: {annotation_summary['important']}
+- Citation candidates: {annotation_summary['citation_candidates']}
+- Core papers: {annotation_summary['core_papers']}
+
+### Reading Status Distribution
+
+{dataframe_to_simple_markdown(reading_table)}
+
+### Priority Distribution
+
+{dataframe_to_simple_markdown(priority_table)}
+
+### Paper Type Distribution
+
+{dataframe_to_simple_markdown(paper_type_table)}
+
+### Research Tag Frequency
+
+{dataframe_to_simple_markdown(tag_table)}
+
+## 4. Citation Pipeline
+
+### Core Papers
+
+{dataframe_to_simple_markdown(core_papers)}
+
+### Citation Candidates
+
+{dataframe_to_simple_markdown(citation_candidates)}
+
+### Important Papers
+
+{dataframe_to_simple_markdown(important_papers)}
+
+## 5. Interpretation Notes
+
+- AJG ranks journals, not individual papers.
+- FT50 identifies journal-list membership, not individual paper quality.
+- Fuzzy journal matches should be manually checked.
+- Use this report as a literature-review management summary, not as a mechanical quality judgement.
+"""
+
+    return report
+
+
+def build_export_filename(stem: str, extension: str = "csv") -> str:
+    """
+    Build a dated export filename for cleaner file management.
+    """
+    clean_stem = re.sub(r"[^A-Za-z0-9_\-]+", "_", stem).strip("_")
+    clean_extension = extension.lstrip(".")
+    date_label = datetime.now().strftime("%Y%m%d")
+
+    return f"{clean_stem}_{date_label}.{clean_extension}"
+
+
+def build_version_testing_checklist() -> str:
+    """
+    Build a compact manual testing checklist for Version 2.0F.
+    """
+    return """
+### Version 2.0F manual testing checklist
+
+Use this checklist before pushing or deploying the app.
+
+```text
+1. Run: streamlit run app.py
+2. Test Single DOI with a known DOI.
+3. Test Batch + Merge with 2-3 DOI values.
+4. Test BibTeX Cleaner with a messy .bib file.
+5. Test Quality Report with a problematic .bib file.
+6. Open Research Library and upload a .bib file.
+7. Confirm ranking match works with demo/private/uploaded ranking data.
+8. Edit Reading Status, Priority, Tags, Citation Candidate, Important, and Notes.
+9. Download the full annotated CSV.
+10. Refresh the app and restore the annotated CSV.
+11. Confirm annotations come back correctly.
+12. Download the literature-review report and dashboard summary tables.
+13. Check unmatched journals and fuzzy matches manually.
+```
+
+Recommended sample files:
+
+```text
+examples/sample_references.bib
+examples/problematic_references.bib
+examples/sample_journal_rankings_demo.csv
+```
+""".strip()
+
+
+def build_library_health_messages(
+    library_df: pd.DataFrame,
+    summary: dict,
+    ranking_summary: dict,
+    annotation_summary: dict,
+    ranking_loaded: bool = False,
+) -> list:
+    """
+    Build practical UI messages for quick quality checks.
+    """
+    messages = []
+    total = max(int(summary.get("total_references", 0)), 1)
+
+    missing_doi_count = int(summary.get("missing_doi_count", 0))
+    missing_doi_share = missing_doi_count / total
+
+    if missing_doi_share >= 0.30:
+        messages.append(
+            (
+                "warning",
+                f"{missing_doi_count} references are missing DOI values. "
+                "This can weaken duplicate detection and metadata tracking."
+            )
+        )
+    elif missing_doi_count > 0:
+        messages.append(
+            (
+                "info",
+                f"{missing_doi_count} references are missing DOI values. "
+                "This is acceptable, but you may want to improve key references first."
+            )
+        )
+
+    if ranking_loaded:
+        unmatched = int(ranking_summary.get("unmatched", 0))
+        unmatched_share = unmatched / total
+
+        if unmatched_share >= 0.30:
+            messages.append(
+                (
+                    "warning",
+                    f"{unmatched} references are unmatched against the ranking file. "
+                    "Download the unmatched journals CSV and check journal names or aliases."
+                )
+            )
+        elif unmatched > 0:
+            messages.append(
+                (
+                    "info",
+                    f"{unmatched} references are unmatched against the ranking file. "
+                    "This is normal for books, working papers, conferences, or naming differences."
+                )
+            )
+
+        if "Match Method" in library_df.columns:
+            fuzzy_count = library_df["Match Method"].fillna("").astype(str).eq("Journal fuzzy").sum()
+            if fuzzy_count > 0:
+                messages.append(
+                    (
+                        "info",
+                        f"{int(fuzzy_count)} references were matched using fuzzy journal-name matching. "
+                        "Manually review these rows before relying on the ranking labels."
+                    )
+                )
+
+    unread = total - int(annotation_summary.get("read", 0))
+    if unread == total and total > 0:
+        messages.append(
+            (
+                "info",
+                "No references are marked as Read yet. Use the editable table to start tracking reading progress."
+            )
+        )
+
+    if int(annotation_summary.get("citation_candidates", 0)) == 0 and total > 0:
+        messages.append(
+            (
+                "info",
+                "No citation candidates are marked yet. Mark likely thesis/paper references to build a citation pipeline."
+            )
+        )
+
+    if not messages:
+        messages.append(("success", "The current library view looks clean. Continue with filtering, annotation, and export."))
+
+    return messages
+
+
+# ============================================================
+# Annotation import / restore helper functions
+# ============================================================
+
+def parse_bool_for_annotation(value) -> bool:
+    """
+    Convert common CSV boolean values to True/False for annotation columns.
+    """
+    if isinstance(value, bool):
+        return value
+
+    if value is None or pd.isna(value):
+        return False
+
+    value = str(value).strip().lower()
+
+    return value in {"true", "yes", "y", "1", "checked", "important"}
+
+
+def load_annotated_library_file(uploaded_file) -> pd.DataFrame:
+    """
+    Load a previously exported annotated research library file.
+
+    Supported formats:
+    - CSV
+    - XLSX
+    - XLS
+    """
+    file_name = uploaded_file.name.lower()
+
+    if file_name.endswith(".csv"):
+        try:
+            return pd.read_csv(uploaded_file)
+        except UnicodeDecodeError:
+            uploaded_file.seek(0)
+            return pd.read_csv(uploaded_file, encoding="latin1")
+
+    if file_name.endswith(".xlsx") or file_name.endswith(".xls"):
+        return pd.read_excel(uploaded_file)
+
+    raise ValueError("Unsupported annotation file format. Please upload CSV, XLSX, or XLS.")
+
+
+def prepare_imported_annotations(raw_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Standardize a previously exported annotated library file before restoring annotations.
+    """
+    imported = raw_df.copy()
+
+    # Build Annotation ID if an older export does not contain it.
+    if "Annotation ID" not in imported.columns:
+        imported["Annotation ID"] = imported.apply(build_annotation_id, axis=1)
+    else:
+        missing_id_mask = imported["Annotation ID"].fillna("").astype(str).str.strip().eq("")
+        if missing_id_mask.any():
+            imported.loc[missing_id_mask, "Annotation ID"] = imported.loc[
+                missing_id_mask
+            ].apply(build_annotation_id, axis=1)
+
+    # Add missing annotation columns with safe defaults.
+    defaults = {
+        "Reading Status": "Unread",
+        "Paper Type": "",
+        "Priority": "Medium",
+        "Research Tags": "",
+        "Citation Candidate": False,
+        "Important": False,
+        "Notes": "",
+    }
+
+    for col, default_value in defaults.items():
+        if col not in imported.columns:
+            imported[col] = default_value
+
+    # Normalize dropdown values so Streamlit selectbox columns do not fail.
+    imported["Reading Status"] = imported["Reading Status"].fillna("Unread").astype(str)
+    imported.loc[~imported["Reading Status"].isin(READING_STATUS_OPTIONS), "Reading Status"] = "Unread"
+
+    imported["Priority"] = imported["Priority"].fillna("Medium").astype(str)
+    imported.loc[~imported["Priority"].isin(PRIORITY_OPTIONS), "Priority"] = "Medium"
+
+    imported["Paper Type"] = imported["Paper Type"].fillna("").astype(str)
+    imported.loc[~imported["Paper Type"].isin(PAPER_TYPE_OPTIONS), "Paper Type"] = ""
+
+    imported["Research Tags"] = imported["Research Tags"].fillna("").astype(str)
+    imported["Notes"] = imported["Notes"].fillna("").astype(str)
+
+    imported["Citation Candidate"] = imported["Citation Candidate"].apply(parse_bool_for_annotation)
+    imported["Important"] = imported["Important"].apply(parse_bool_for_annotation)
+
+    return imported
+
+
+def import_annotations_into_store(imported_df: pd.DataFrame, overwrite_existing: bool = True) -> dict:
+    """
+    Restore annotations from an imported annotated CSV/XLSX into session state.
+
+    Returns a small summary dictionary for the UI.
+    """
+    initialize_annotation_store()
+
+    prepared = prepare_imported_annotations(imported_df)
+    store = st.session_state["research_library_annotations"]
+
+    imported_count = 0
+    skipped_count = 0
+
+    for _, row in prepared.iterrows():
+        annotation_id = str(row.get("Annotation ID", "")).strip()
+
+        if not annotation_id:
+            skipped_count += 1
+            continue
+
+        if annotation_id in store and not overwrite_existing:
+            skipped_count += 1
+            continue
+
+        store[annotation_id] = {
+            col: row.get(col, "")
+            for col in ANNOTATION_COLUMNS
+            if col in prepared.columns
+        }
+
+        imported_count += 1
+
+    st.session_state["research_library_annotations"] = store
+
+    return {
+        "imported": imported_count,
+        "skipped": skipped_count,
+        "total_rows": len(prepared),
+    }
+
+
+def clear_annotation_store() -> None:
+    """
+    Clear all current session annotations.
+    """
+    st.session_state["research_library_annotations"] = {}
+
+
+
+# ============================================================
 # Session state
 # ============================================================
 
@@ -1376,13 +2982,15 @@ st.sidebar.caption(f"BibFlow Version {APP_VERSION}")
 
 
 
-single_tab, batch_tab, title_tab, cleaner_tab, quality_tab = st.tabs(
+
+single_tab, batch_tab, title_tab, cleaner_tab, quality_tab, library_tab = st.tabs(
     [
         "🔎 Single DOI",
         "📦 Batch + Merge",
         "📝 Title Search",
         "🧹 BibTeX Cleaner",
         "📊 Quality Report",
+        "📚 Research Library",
     ]
 )
 
@@ -2217,6 +3825,927 @@ with quality_tab:
         else:
             st.success("Your `.bib` file looks clean and ready for Overleaf.")
 
+
+
+# ============================================================
+# Research Library workflow
+# ============================================================
+
+with library_tab:
+
+    st.markdown("## Research Library Explorer")
+
+    st.markdown(
+        """
+        Upload a `.bib` file and turn your references into a searchable, editable, and exportable research library.
+
+        **Version 2.0F** is a polish and testing update. It keeps the Version 2.0E dashboard/report workflow,
+        but improves guidance, export filenames, quick health checks, and manual testing support.
+
+        Ranking data is optional:
+        - If a private full ranking file exists, BibFlow loads it automatically.
+        - If no private file exists, BibFlow can use a small demo ranking file.
+        - Users can also upload their own ranking file in the advanced section.
+        """
+    )
+
+    st.info(
+        "For public deployment, keep the full ranking file private in `data/private/` and exclude this folder from GitHub. "
+        "Use the annotated CSV export/restore workflow to continue literature-review work across sessions."
+    )
+
+    with st.expander("Version 2.0F sample files and testing checklist", expanded=False):
+        st.markdown(build_version_testing_checklist())
+
+    st.markdown("### 1. Upload BibTeX Library")
+
+    library_bib_file = st.file_uploader(
+        "Upload a .bib file for Research Library Explorer",
+        type=["bib"],
+        key="research_library_bib_file"
+    )
+
+    library_content = ""
+
+    if library_bib_file is not None:
+        library_content = library_bib_file.getvalue().decode("utf-8", errors="ignore")
+    elif existing_bib_content.strip():
+        library_content = existing_bib_content
+
+    if not library_content.strip():
+        st.warning("Please upload a `.bib` file to explore your research library.")
+
+    else:
+        try:
+            library_entries = parse_bibtex_entries(library_content)
+        except Exception as e:
+            st.error(f"Failed to parse the uploaded `.bib` file: {e}")
+            library_entries = []
+
+        if not library_entries:
+            st.warning("No valid BibTeX entries were found in this file.")
+
+        else:
+            library_rows = bibtex_entries_to_library_rows(library_entries)
+            library_df = pd.DataFrame(library_rows)
+
+            st.markdown("### 2. Optional: Restore Previous Annotations")
+
+            st.markdown(
+                """
+                If you previously downloaded an annotated research library CSV from BibFlow,
+                upload it here to continue editing your reading status, tags, priority, citation flags, and notes.
+                """
+            )
+
+            restore_col1, restore_col2 = st.columns([2, 1])
+
+            with restore_col1:
+                annotated_library_file = st.file_uploader(
+                    "Upload previously exported annotated library CSV/XLSX",
+                    type=["csv", "xlsx", "xls"],
+                    key="restore_annotated_library_file"
+                )
+
+            with restore_col2:
+                overwrite_restored_annotations = st.checkbox(
+                    "Overwrite current session annotations",
+                    value=True,
+                    key="overwrite_restored_annotations"
+                )
+
+                clear_current_annotations = st.button(
+                    "Clear session annotations",
+                    key="clear_current_annotations_button"
+                )
+
+            if clear_current_annotations:
+                clear_annotation_store()
+                st.success("Current session annotations have been cleared.")
+
+            restored_annotation_summary = None
+
+            if annotated_library_file is not None:
+                try:
+                    raw_annotated_df = load_annotated_library_file(annotated_library_file)
+                    restored_annotation_summary = import_annotations_into_store(
+                        raw_annotated_df,
+                        overwrite_existing=overwrite_restored_annotations,
+                    )
+
+                    st.success(
+                        f"Restored {restored_annotation_summary['imported']} annotation row(s) "
+                        f"from {restored_annotation_summary['total_rows']} uploaded row(s). "
+                        f"Skipped {restored_annotation_summary['skipped']} row(s)."
+                    )
+
+                    with st.expander("Preview restored annotation file", expanded=False):
+                        st.dataframe(
+                            prepare_imported_annotations(raw_annotated_df).head(30),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+
+                except Exception as e:
+                    st.error(f"Failed to restore annotations: {e}")
+
+            st.markdown("### 3. Optional Journal Ranking Match")
+
+            st.markdown(
+                """
+                Journal ranking data is optional.  
+                BibFlow can still build your editable research library even when no ranking file is available.
+                """
+            )
+
+            default_ranking_raw_df, default_ranking_source, default_ranking_type = load_default_ranking_file()
+
+            ranking_df = None
+            ranking_source_label = ""
+            ranking_loaded = False
+            ranking_source_type = "none"
+
+            if default_ranking_raw_df is not None:
+                try:
+                    ranking_df = standardize_ranking_dataframe(default_ranking_raw_df)
+                    ranking_source_label = default_ranking_source
+                    ranking_loaded = True
+                    ranking_source_type = default_ranking_type
+
+                    if default_ranking_type == "private":
+                        st.success(
+                            f"Private ranking file loaded automatically: `{default_ranking_source}`"
+                        )
+
+                    elif default_ranking_type == "demo":
+                        st.info(
+                            f"Small demo ranking file loaded: `{default_ranking_source}`. "
+                            "This is only for demonstration and does not contain the full AJG/FT50 list."
+                        )
+
+                except Exception as e:
+                    st.warning(f"A default ranking file was found but could not be loaded: {e}")
+                    ranking_df = None
+                    ranking_loaded = False
+                    ranking_source_type = "none"
+
+            else:
+                st.info(
+                    "No default ranking file was found. "
+                    "The research library will still work without journal rankings."
+                )
+
+            with st.expander("Advanced: upload your own journal ranking file", expanded=False):
+
+                st.markdown(
+                    """
+                    Uploading a ranking file is optional.
+
+                    Use this when you want to match your references with a full AJG, FT50, ABDC,
+                    CSSCI, JCR, or school-specific journal ranking list.
+
+                    Recommended columns:
+
+                    ```text
+                    journal
+                    issn
+                    ajg_rating
+                    ajg_field
+                    ajg_source_year
+                    ft50
+                    ft50_issn
+                    ft50_title
+                    ```
+                    """
+                )
+
+                ranking_file = st.file_uploader(
+                    "Upload optional ranking file",
+                    type=["csv", "xlsx", "xls"],
+                    key="journal_ranking_file"
+                )
+
+                if ranking_file is not None:
+                    try:
+                        raw_ranking_df = load_ranking_file(ranking_file)
+                        ranking_df = standardize_ranking_dataframe(raw_ranking_df)
+                        ranking_source_label = ranking_file.name
+                        ranking_loaded = True
+                        ranking_source_type = "uploaded"
+
+                        st.success(
+                            f"Uploaded ranking file loaded successfully: `{ranking_file.name}`"
+                        )
+
+                    except Exception as e:
+                        st.error(f"Failed to load uploaded ranking file: {e}")
+                        ranking_df = None
+                        ranking_loaded = False
+                        ranking_source_type = "none"
+
+            enable_fuzzy_matching = True
+            fuzzy_threshold = 0.92
+
+            if ranking_df is not None and not ranking_df.empty:
+
+                setting_col1, setting_col2 = st.columns(2)
+
+                with setting_col1:
+                    enable_fuzzy_matching = st.checkbox(
+                        "Enable conservative fuzzy journal-name matching",
+                        value=True,
+                        key="enable_fuzzy_journal_matching"
+                    )
+
+                with setting_col2:
+                    fuzzy_threshold = st.slider(
+                        "Fuzzy match threshold",
+                        min_value=0.80,
+                        max_value=1.00,
+                        value=0.92,
+                        step=0.01,
+                        key="fuzzy_match_threshold"
+                    )
+
+                with st.expander("Preview standardized ranking data", expanded=False):
+                    st.caption(f"Ranking source: {ranking_source_label}")
+                    st.caption(f"Ranking source type: {ranking_source_type}")
+                    st.dataframe(
+                        ranking_df.head(30),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
+                library_df = match_library_with_ranking(
+                    library_df=library_df,
+                    ranking_df=ranking_df,
+                    fuzzy_threshold=fuzzy_threshold,
+                    enable_fuzzy_matching=enable_fuzzy_matching,
+                )
+
+            # Version 2.0D: add editable annotation columns and apply restored/current session annotations.
+            library_df = add_annotation_columns(library_df)
+            library_df = apply_annotation_store(library_df)
+
+            summary = summarize_research_library(library_df)
+            ranking_summary = summarize_ranking_matches(library_df)
+            annotation_summary = summarize_annotations(library_df)
+
+            st.markdown("### Library Summary")
+
+            metric_col1, metric_col2, metric_col3, metric_col4, metric_col5 = st.columns(5)
+
+            with metric_col1:
+                st.metric("Total References", summary["total_references"])
+
+            with metric_col2:
+                st.metric("With DOI", summary["doi_count"])
+
+            with metric_col3:
+                st.metric("Missing DOI", summary["missing_doi_count"])
+
+            with metric_col4:
+                st.metric("Unique Journals", summary["journal_count"])
+
+            with metric_col5:
+                st.metric("Year Range", summary["year_range"])
+
+            if ranking_loaded:
+                st.markdown("### Journal Ranking Summary")
+
+                rank_col1, rank_col2, rank_col3, rank_col4, rank_col5 = st.columns(5)
+
+                with rank_col1:
+                    st.metric("Matched", ranking_summary["matched"])
+
+                with rank_col2:
+                    st.metric("Unmatched", ranking_summary["unmatched"])
+
+                with rank_col3:
+                    st.metric("AJG 3+", ranking_summary["ajg_3_plus"])
+
+                with rank_col4:
+                    st.metric("AJG 4 / 4*", ranking_summary["ajg_4_plus"])
+
+                with rank_col5:
+                    st.metric("FT50", ranking_summary["ft50_count"])
+
+                ajg_counts = (
+                    library_df["AJG Rating"]
+                    .fillna("")
+                    .replace("", "Unmatched")
+                    .value_counts()
+                    .reset_index()
+                )
+
+                ajg_counts.columns = ["AJG Rating", "Count"]
+
+                ft50_counts = (
+                    library_df["FT50"]
+                    .fillna("")
+                    .replace("", "No")
+                    .value_counts()
+                    .reset_index()
+                )
+
+                ft50_counts.columns = ["FT50", "Count"]
+
+                dist_col1, dist_col2 = st.columns(2)
+
+                with dist_col1:
+                    with st.expander("AJG rating distribution", expanded=False):
+                        st.dataframe(
+                            ajg_counts,
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+
+                with dist_col2:
+                    with st.expander("FT50 distribution", expanded=False):
+                        st.dataframe(
+                            ft50_counts,
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+
+            st.markdown("### Research Progress Summary")
+
+            ann_col1, ann_col2, ann_col3, ann_col4, ann_col5 = st.columns(5)
+
+            with ann_col1:
+                st.metric("Read", annotation_summary["read"])
+
+            with ann_col2:
+                st.metric("Reading", annotation_summary["reading"])
+
+            with ann_col3:
+                st.metric("Important", annotation_summary["important"])
+
+            with ann_col4:
+                st.metric("Citation Candidates", annotation_summary["citation_candidates"])
+
+            with ann_col5:
+                st.metric("Core Papers", annotation_summary["core_papers"])
+
+            with st.expander("Version 2.0F quick health checks", expanded=True):
+                for message_type, message_text in build_library_health_messages(
+                    library_df=library_df,
+                    summary=summary,
+                    ranking_summary=ranking_summary,
+                    annotation_summary=annotation_summary,
+                    ranking_loaded=ranking_loaded,
+                ):
+                    if message_type == "warning":
+                        st.warning(message_text)
+                    elif message_type == "success":
+                        st.success(message_text)
+                    else:
+                        st.info(message_text)
+
+            st.divider()
+
+            st.markdown("### Search and Filter")
+
+            search_text = st.text_input(
+                "Search references",
+                placeholder="Search by title, author, journal, DOI, ISSN, AJG field, tags, notes, or citation key",
+                key="library_search_text"
+            )
+
+            filter_col1, filter_col2, filter_col3 = st.columns(3)
+
+            with filter_col1:
+                year_options = sorted(
+                    [
+                        y for y in library_df["Year"].dropna().astype(str).unique()
+                        if y.strip()
+                    ],
+                    reverse=True
+                )
+
+                selected_years = st.multiselect(
+                    "Filter by year",
+                    options=year_options,
+                    key="library_year_filter"
+                )
+
+            with filter_col2:
+                journal_options = sorted(
+                    [
+                        j for j in library_df["Journal / Venue"].dropna().astype(str).unique()
+                        if j.strip()
+                    ]
+                )
+
+                selected_journals = st.multiselect(
+                    "Filter by journal / venue",
+                    options=journal_options,
+                    key="library_journal_filter"
+                )
+
+            with filter_col3:
+                entry_type_options = sorted(
+                    [
+                        t for t in library_df["Entry Type"].dropna().astype(str).unique()
+                        if t.strip()
+                    ]
+                )
+
+                selected_entry_types = st.multiselect(
+                    "Filter by entry type",
+                    options=entry_type_options,
+                    key="library_entry_type_filter"
+                )
+
+            rank_filter_col1, rank_filter_col2, rank_filter_col3 = st.columns(3)
+
+            with rank_filter_col1:
+                ajg_rating_options = sorted(
+                    [
+                        r for r in library_df["AJG Rating"].dropna().astype(str).unique()
+                        if r.strip()
+                    ],
+                    key=rating_value,
+                    reverse=True
+                )
+
+                selected_ajg_ratings = st.multiselect(
+                    "Filter by AJG rating",
+                    options=ajg_rating_options,
+                    key="library_ajg_rating_filter"
+                )
+
+            with rank_filter_col2:
+                ft50_options = sorted(
+                    [
+                        r for r in library_df["FT50"].dropna().astype(str).unique()
+                        if r.strip()
+                    ]
+                )
+
+                selected_ft50 = st.multiselect(
+                    "Filter by FT50",
+                    options=ft50_options,
+                    key="library_ft50_filter"
+                )
+
+            with rank_filter_col3:
+                match_status_options = sorted(
+                    [
+                        s for s in library_df["Ranking Match Status"].dropna().astype(str).unique()
+                        if s.strip()
+                    ]
+                )
+
+                selected_match_status = st.multiselect(
+                    "Filter by match status",
+                    options=match_status_options,
+                    key="library_match_status_filter"
+                )
+
+            quick_filter_col1, quick_filter_col2 = st.columns(2)
+
+            with quick_filter_col1:
+                only_ajg_3_plus = st.checkbox(
+                    "Show only AJG 3+",
+                    value=False,
+                    key="only_ajg_3_plus_filter"
+                )
+
+            with quick_filter_col2:
+                only_ft50 = st.checkbox(
+                    "Show only FT50",
+                    value=False,
+                    key="only_ft50_filter"
+                )
+
+            annotation_filter_col1, annotation_filter_col2, annotation_filter_col3 = st.columns(3)
+
+            with annotation_filter_col1:
+                selected_reading_status = st.multiselect(
+                    "Filter by reading status",
+                    options=READING_STATUS_OPTIONS,
+                    key="library_reading_status_filter"
+                )
+
+            with annotation_filter_col2:
+                selected_priorities = st.multiselect(
+                    "Filter by priority",
+                    options=PRIORITY_OPTIONS,
+                    key="library_priority_filter"
+                )
+
+            with annotation_filter_col3:
+                selected_paper_types = st.multiselect(
+                    "Filter by paper type",
+                    options=[x for x in PAPER_TYPE_OPTIONS if x],
+                    key="library_paper_type_filter"
+                )
+
+            annotation_flag_col1, annotation_flag_col2 = st.columns(2)
+
+            with annotation_flag_col1:
+                only_citation_candidates = st.checkbox(
+                    "Show only citation candidates",
+                    value=False,
+                    key="only_citation_candidates_filter"
+                )
+
+            with annotation_flag_col2:
+                only_important = st.checkbox(
+                    "Show only important papers",
+                    value=False,
+                    key="only_important_filter"
+                )
+
+            filtered_library_df = filter_library_dataframe(
+                df=library_df,
+                search_text=search_text,
+                selected_years=selected_years,
+                selected_journals=selected_journals,
+                selected_entry_types=selected_entry_types,
+                selected_ajg_ratings=selected_ajg_ratings,
+                selected_ft50=selected_ft50,
+                selected_match_status=selected_match_status,
+                only_ajg_3_plus=only_ajg_3_plus,
+                only_ft50=only_ft50,
+                selected_reading_status=selected_reading_status,
+                selected_priorities=selected_priorities,
+                selected_paper_types=selected_paper_types,
+                only_citation_candidates=only_citation_candidates,
+                only_important=only_important,
+            )
+
+            display_columns = [
+                "Citation Key",
+                "Title",
+                "Authors",
+                "Year",
+                "Journal / Venue",
+                "AJG Rating",
+                "AJG Field",
+                "AJG Source Year",
+                "FT50",
+                "Reading Status",
+                "Paper Type",
+                "Priority",
+                "Research Tags",
+                "Citation Candidate",
+                "Important",
+                "Notes",
+                "DOI",
+                "ISSN",
+                "Matched Journal",
+                "Ranking Match Status",
+                "Match Method",
+                "Match Score",
+                "Ranking Source",
+                "Ranking Match Note",
+                "Entry Type",
+                "Annotation ID",
+            ]
+
+            display_columns = [
+                col for col in display_columns
+                if col in filtered_library_df.columns
+            ]
+
+            st.markdown("### Editable Research Library Table")
+
+            st.caption(
+                f"Showing {len(filtered_library_df)} of {len(library_df)} references. "
+                "Edit reading status, paper type, priority, tags, citation flags, importance, and notes directly in the table. "
+                "Download the annotated CSV after editing if you want to keep the work permanently."
+            )
+
+            disabled_columns = [
+                col for col in display_columns
+                if col not in ANNOTATION_COLUMNS
+            ]
+
+            edited_library_df = st.data_editor(
+                filtered_library_df[display_columns],
+                use_container_width=True,
+                hide_index=True,
+                disabled=disabled_columns,
+                column_config={
+                    "Reading Status": st.column_config.SelectboxColumn(
+                        "Reading Status",
+                        options=READING_STATUS_OPTIONS,
+                        required=True,
+                    ),
+                    "Paper Type": st.column_config.SelectboxColumn(
+                        "Paper Type",
+                        options=PAPER_TYPE_OPTIONS,
+                    ),
+                    "Priority": st.column_config.SelectboxColumn(
+                        "Priority",
+                        options=PRIORITY_OPTIONS,
+                        required=True,
+                    ),
+                    "Research Tags": st.column_config.TextColumn(
+                        "Research Tags",
+                        help="Use comma-separated tags, e.g. option-implied density, VaR, GEV, tail risk",
+                    ),
+                    "Citation Candidate": st.column_config.CheckboxColumn(
+                        "Citation Candidate",
+                        help="Mark papers you may cite in your thesis or paper.",
+                    ),
+                    "Important": st.column_config.CheckboxColumn(
+                        "Important",
+                        help="Mark especially important papers.",
+                    ),
+                    "Notes": st.column_config.TextColumn(
+                        "Notes",
+                        help="Add short reading notes or literature review comments.",
+                    ),
+                    "Annotation ID": None,
+                },
+                key="research_library_annotation_editor",
+            )
+
+            update_annotation_store(edited_library_df)
+            library_df = apply_annotation_store(library_df)
+            filtered_library_df = apply_annotation_store(filtered_library_df)
+
+            st.divider()
+
+            st.markdown("### Research Library Dashboard")
+
+            dashboard_scope = st.radio(
+                "Dashboard scope",
+                options=["Filtered view", "Full library"],
+                horizontal=True,
+                key="dashboard_scope_selector",
+            )
+
+            dashboard_df = filtered_library_df.copy() if dashboard_scope == "Filtered view" else library_df.copy()
+            report_scope_label = "Filtered library" if dashboard_scope == "Filtered view" else "Full library"
+
+            dashboard_summary = summarize_research_library(dashboard_df)
+            dashboard_ranking_summary = summarize_ranking_matches(dashboard_df)
+            dashboard_annotation_summary = summarize_annotations(dashboard_df)
+
+            dash_col1, dash_col2, dash_col3, dash_col4, dash_col5 = st.columns(5)
+
+            with dash_col1:
+                st.metric("Dashboard References", dashboard_summary["total_references"])
+
+            with dash_col2:
+                st.metric("AJG 3+", dashboard_ranking_summary["ajg_3_plus"])
+
+            with dash_col3:
+                st.metric("AJG 4 / 4*", dashboard_ranking_summary["ajg_4_plus"])
+
+            with dash_col4:
+                st.metric("Citation Candidates", dashboard_annotation_summary["citation_candidates"])
+
+            with dash_col5:
+                st.metric("Core Papers", dashboard_annotation_summary["core_papers"])
+
+            dashboard_tab1, dashboard_tab2, dashboard_tab3, dashboard_tab4 = st.tabs(
+                [
+                    "Ranking Overview",
+                    "Reading Progress",
+                    "Journals & Tags",
+                    "Citation Pipeline",
+                ]
+            )
+
+            with dashboard_tab1:
+                ajg_distribution = make_count_table(
+                    dashboard_df,
+                    "AJG Rating",
+                    empty_label="Unmatched / No AJG rating",
+                    order=["4*", "4", "3", "2", "1", "Unmatched / No AJG rating"],
+                )
+                field_distribution = make_count_table(
+                    dashboard_df,
+                    "AJG Field",
+                    empty_label="Unspecified field",
+                )
+                match_distribution = make_count_table(
+                    dashboard_df,
+                    "Ranking Match Status",
+                    empty_label="Unspecified",
+                )
+
+                rank_left, rank_right = st.columns(2)
+
+                with rank_left:
+                    st.markdown("#### AJG Rating Distribution")
+                    st.dataframe(ajg_distribution, use_container_width=True, hide_index=True)
+                    if not ajg_distribution.empty:
+                        st.bar_chart(ajg_distribution.set_index("AJG Rating")["Count"])
+
+                with rank_right:
+                    st.markdown("#### Ranking Match Status")
+                    st.dataframe(match_distribution, use_container_width=True, hide_index=True)
+                    if not match_distribution.empty:
+                        st.bar_chart(match_distribution.set_index("Ranking Match Status")["Count"])
+
+                st.markdown("#### AJG Field Distribution")
+                st.dataframe(field_distribution.head(20), use_container_width=True, hide_index=True)
+
+            with dashboard_tab2:
+                reading_distribution = make_count_table(
+                    dashboard_df,
+                    "Reading Status",
+                    empty_label="Unspecified",
+                )
+                priority_distribution = make_count_table(
+                    dashboard_df,
+                    "Priority",
+                    empty_label="Unspecified",
+                )
+                paper_type_distribution = make_count_table(
+                    dashboard_df,
+                    "Paper Type",
+                    empty_label="Unspecified",
+                )
+
+                progress_left, progress_right = st.columns(2)
+
+                with progress_left:
+                    st.markdown("#### Reading Status")
+                    st.dataframe(reading_distribution, use_container_width=True, hide_index=True)
+                    if not reading_distribution.empty:
+                        st.bar_chart(reading_distribution.set_index("Reading Status")["Count"])
+
+                with progress_right:
+                    st.markdown("#### Priority")
+                    st.dataframe(priority_distribution, use_container_width=True, hide_index=True)
+                    if not priority_distribution.empty:
+                        st.bar_chart(priority_distribution.set_index("Priority")["Count"])
+
+                st.markdown("#### Paper Type")
+                st.dataframe(paper_type_distribution, use_container_width=True, hide_index=True)
+
+            with dashboard_tab3:
+                top_journals = make_top_journal_table(dashboard_df, top_n=20)
+                tag_frequency = make_tag_frequency_table(dashboard_df, top_n=25)
+
+                journal_left, journal_right = st.columns(2)
+
+                with journal_left:
+                    st.markdown("#### Top Journals / Venues")
+                    st.dataframe(top_journals, use_container_width=True, hide_index=True)
+
+                with journal_right:
+                    st.markdown("#### Research Tag Frequency")
+                    st.dataframe(tag_frequency, use_container_width=True, hide_index=True)
+                    if not tag_frequency.empty:
+                        st.bar_chart(tag_frequency.set_index("Research Tag")["Count"])
+
+            with dashboard_tab4:
+                core_papers_df = make_focus_paper_table(
+                    dashboard_df,
+                    condition_col="Priority",
+                    condition_value="Core paper",
+                    max_rows=30,
+                )
+                citation_candidates_df = make_focus_paper_table(
+                    dashboard_df,
+                    condition_col="Citation Candidate",
+                    condition_value=True,
+                    max_rows=30,
+                )
+                important_papers_df = make_focus_paper_table(
+                    dashboard_df,
+                    condition_col="Important",
+                    condition_value=True,
+                    max_rows=30,
+                )
+
+                st.markdown("#### Core Papers")
+                st.dataframe(core_papers_df, use_container_width=True, hide_index=True)
+
+                st.markdown("#### Citation Candidates")
+                st.dataframe(citation_candidates_df, use_container_width=True, hide_index=True)
+
+                st.markdown("#### Important Papers")
+                st.dataframe(important_papers_df, use_container_width=True, hide_index=True)
+
+            literature_review_report = build_literature_review_report(
+                dashboard_df,
+                scope_label=report_scope_label,
+            )
+
+            st.download_button(
+                label="Download literature-review report as Markdown",
+                data=literature_review_report.encode("utf-8"),
+                file_name=build_export_filename("bibflow_literature_review_report", "md"),
+                mime="text/markdown",
+                key="download_literature_review_report_md",
+            )
+
+            dashboard_summary_tables = []
+
+            for table_name, table_df in [
+                ("ajg_distribution", make_count_table(dashboard_df, "AJG Rating", empty_label="Unmatched / No AJG rating")),
+                ("reading_status", make_count_table(dashboard_df, "Reading Status", empty_label="Unspecified")),
+                ("priority", make_count_table(dashboard_df, "Priority", empty_label="Unspecified")),
+                ("paper_type", make_count_table(dashboard_df, "Paper Type", empty_label="Unspecified")),
+                ("research_tags", make_tag_frequency_table(dashboard_df, top_n=50)),
+                ("top_journals", make_top_journal_table(dashboard_df, top_n=50)),
+            ]:
+                temp_df = table_df.copy()
+                temp_df.insert(0, "Summary Table", table_name)
+                dashboard_summary_tables.append(temp_df)
+
+            dashboard_summary_export = pd.concat(dashboard_summary_tables, ignore_index=True, sort=False)
+
+            st.download_button(
+                label="Download dashboard summary tables as CSV",
+                data=dashboard_summary_export.to_csv(index=False).encode("utf-8"),
+                file_name=build_export_filename("bibflow_dashboard_summary_tables", "csv"),
+                mime="text/csv",
+                key="download_dashboard_summary_tables_csv",
+            )
+
+            st.divider()
+
+            st.markdown("### Export")
+
+            csv_data = filtered_library_df.to_csv(index=False).encode("utf-8")
+
+            st.download_button(
+                label="Download filtered annotated research library as CSV",
+                data=csv_data,
+                file_name=build_export_filename("bibflow_annotated_research_library_filtered", "csv"),
+                mime="text/csv",
+                key="download_annotated_research_library_csv"
+            )
+
+            full_csv_data = library_df.to_csv(index=False).encode("utf-8")
+
+            st.download_button(
+                label="Download full annotated research library as CSV",
+                data=full_csv_data,
+                file_name=build_export_filename("bibflow_annotated_research_library_full", "csv"),
+                mime="text/csv",
+                key="download_full_annotated_research_library_csv"
+            )
+
+            annotation_export_columns = [
+                "Annotation ID",
+                "Citation Key",
+                "Title",
+                "Year",
+                "Journal / Venue",
+                "Reading Status",
+                "Paper Type",
+                "Priority",
+                "Research Tags",
+                "Citation Candidate",
+                "Important",
+                "Notes",
+            ]
+
+            annotation_export_columns = [
+                col for col in annotation_export_columns
+                if col in library_df.columns
+            ]
+
+            annotations_only_csv = library_df[annotation_export_columns].to_csv(index=False).encode("utf-8")
+
+            st.download_button(
+                label="Download annotations-only CSV for restore/import",
+                data=annotations_only_csv,
+                file_name=build_export_filename("bibflow_annotations_only", "csv"),
+                mime="text/csv",
+                key="download_annotations_only_csv"
+            )
+
+            unmatched_df = library_df[
+                library_df["Ranking Match Status"] == "Unmatched"
+            ].copy()
+
+            if ranking_loaded and not unmatched_df.empty:
+                unmatched_csv = unmatched_df.to_csv(index=False).encode("utf-8")
+
+                st.download_button(
+                    label="Download unmatched journals for manual checking",
+                    data=unmatched_csv,
+                    file_name=build_export_filename("bibflow_unmatched_journals", "csv"),
+                    mime="text/csv",
+                    key="download_unmatched_journals_csv"
+                )
+
+            st.markdown("### Interpretation Notes")
+
+            st.markdown(
+                """
+                - AJG ranks **journals**, not individual papers.
+                - The correct interpretation is: *this paper is published in an AJG 3 journal*.
+                - FT50 also identifies journals, not paper quality directly.
+                - Reading status, tags, priority, citation flags, importance flags, and notes can now be restored from a previously downloaded annotated CSV.
+                - Version 2.0F adds polish, clearer testing guidance, quick health checks, and dated export filenames.
+                - To continue your work later, download the annotated CSV and upload it again in the restore section.
+                - Fuzzy matches should be manually checked, especially when the match score is below 1.00.
+                - Keep the full ranking file private unless redistribution is clearly allowed.
+                """
+            )
 
 
 render_footer()
