@@ -34,7 +34,7 @@ st.set_page_config(
 # App branding and UI helpers
 # ============================================================
 
-APP_VERSION = "2.0F"
+APP_VERSION = "2.2"
 APP_NAME = "BibFlow"
 APP_TAGLINE = "A polished research library assistant for BibTeX, Overleaf, journal rankings, and literature review workflows"
 
@@ -1473,6 +1473,99 @@ def standardize_yes_no(value: str) -> str:
     return ""
 
 
+
+def standardize_abdc_rating(value: str) -> str:
+    """
+    Standardize ABDC-style ratings.
+    """
+    if value is None or pd.isna(value):
+        return ""
+
+    value = str(value).strip().upper()
+    value = value.replace(" ", "")
+
+    if value in ["A*", "A+", "APLUS", "A-STAR", "ASTAR"]:
+        return "A*"
+
+    if value in ["A", "B", "C"]:
+        return value
+
+    return value
+
+
+def abdc_rating_value(rating: str) -> int:
+    """
+    Convert ABDC-style ratings to numeric order.
+    """
+    rating = str(rating).strip().upper()
+
+    mapping = {
+        "A*": 4,
+        "A+": 4,
+        "A": 3,
+        "B": 2,
+        "C": 1,
+    }
+
+    return mapping.get(rating, 0)
+
+
+def standardize_quartile(value: str) -> str:
+    """
+    Standardize JCR/SJR-style quartiles.
+    """
+    if value is None or pd.isna(value):
+        return ""
+
+    value = str(value).strip().upper()
+    value = value.replace(" ", "")
+
+    if value in ["1", "Q1", "QUARTILE1"]:
+        return "Q1"
+    if value in ["2", "Q2", "QUARTILE2"]:
+        return "Q2"
+    if value in ["3", "Q3", "QUARTILE3"]:
+        return "Q3"
+    if value in ["4", "Q4", "QUARTILE4"]:
+        return "Q4"
+
+    return value
+
+
+def quartile_value(value: str) -> int:
+    """
+    Convert quartile to numeric order where Q1 is highest.
+    """
+    value = str(value).strip().upper()
+
+    mapping = {
+        "Q1": 4,
+        "Q2": 3,
+        "Q3": 2,
+        "Q4": 1,
+    }
+
+    return mapping.get(value, 0)
+
+
+def standardize_list_indicator(value: str) -> str:
+    """
+    Standardize journal-list membership indicators such as CSSCI or Chinese Core.
+    """
+    if value is None or pd.isna(value):
+        return ""
+
+    value = str(value).strip()
+    value_lower = value.lower()
+
+    if value_lower in ["yes", "y", "true", "1", "included", "core", "cssci", "中文核心", "北大核心", "c"]:
+        return "Yes"
+
+    if value_lower in ["no", "n", "false", "0", "not included", "none", "nan"]:
+        return ""
+
+    return value
+
 def load_ranking_file(uploaded_file) -> pd.DataFrame:
     """
     Load uploaded ranking file.
@@ -1522,23 +1615,19 @@ def load_default_ranking_file() -> tuple:
     return None, "", "none"
 
 
+
 def standardize_ranking_dataframe(raw_df: pd.DataFrame) -> pd.DataFrame:
     """
-    Standardize AJG + FT50 ranking data.
+    Standardize uploaded journal ranking data for Version 2.2 multi-ranking support.
 
-    Works with the cleaned combined file:
-
-    journal
-    journal_normalized
-    journal_alias_normalized
-    issn
-    ajg_rating
-    ajg_field
-    ajg_source_year
-    ft50
-    ft50_issn
-    ft50_title
-    match_note
+    Supported ranking columns are optional. BibFlow tries to detect them flexibly:
+    - AJG/ABS rating and field
+    - FT50 membership
+    - ABDC rating and field
+    - JCR/SJR quartiles
+    - CSSCI / Chinese-core indicators
+    - school-specific tiers
+    - custom user-defined ratings and tags
     """
     df = raw_df.copy()
 
@@ -1655,6 +1744,121 @@ def standardize_ranking_dataframe(raw_df: pd.DataFrame) -> pd.DataFrame:
         ],
     )
 
+    abdc_col = find_column(
+        df,
+        [
+            "abdc_rating",
+            "abdc rating",
+            "abdc",
+            "abdc_rank",
+            "abdc rank",
+            "abdc2022",
+            "abdc_2022",
+        ],
+    )
+
+    abdc_field_col = find_column(
+        df,
+        [
+            "abdc_field",
+            "abdc field",
+            "abdc_for_code",
+            "abdc for code",
+            "abdc_subject",
+            "abdc subject",
+        ],
+    )
+
+    jcr_quartile_col = find_column(
+        df,
+        [
+            "jcr_quartile",
+            "jcr quartile",
+            "jcr",
+            "jif_quartile",
+            "jif quartile",
+            "wos_quartile",
+            "web of science quartile",
+        ],
+    )
+
+    sjr_quartile_col = find_column(
+        df,
+        [
+            "sjr_quartile",
+            "sjr quartile",
+            "sjr",
+            "scimago_quartile",
+            "scimago quartile",
+        ],
+    )
+
+    cssci_col = find_column(
+        df,
+        [
+            "cssci",
+            "cssci_status",
+            "cssci status",
+            "cssci_source",
+            "cssci source",
+        ],
+    )
+
+    chinese_core_col = find_column(
+        df,
+        [
+            "chinese_core",
+            "chinese core",
+            "pkucore",
+            "pku core",
+            "beida_core",
+            "beida core",
+            "北大核心",
+            "中文核心",
+        ],
+    )
+
+    school_tier_col = find_column(
+        df,
+        [
+            "school_tier",
+            "school tier",
+            "school_rank",
+            "school rank",
+            "ucd_tier",
+            "university_tier",
+            "internal_tier",
+            "internal tier",
+        ],
+    )
+
+    custom_rating_col = find_column(
+        df,
+        [
+            "custom_rating",
+            "custom rating",
+            "custom_rank",
+            "custom rank",
+            "user_rating",
+            "user rating",
+            "personal_rating",
+            "personal rating",
+        ],
+    )
+
+    ranking_tags_col = find_column(
+        df,
+        [
+            "ranking_tags",
+            "ranking tags",
+            "tags",
+            "ranking_label",
+            "ranking label",
+            "list_name",
+            "list name",
+        ],
+    )
+
     match_note_col = find_column(
         df,
         [
@@ -1708,55 +1912,27 @@ def standardize_ranking_dataframe(raw_df: pd.DataFrame) -> pd.DataFrame:
             "Ranking Journal Normalized"
         ]
 
-    if issn_col:
-        standardized["ISSN"] = df[issn_col].apply(normalize_issn)
-    else:
-        standardized["ISSN"] = ""
+    standardized["ISSN"] = df[issn_col].apply(normalize_issn) if issn_col else ""
+    standardized["AJG Rating"] = df[ajg_col].apply(standardize_ajg_rating) if ajg_col else ""
+    standardized["AJG Field"] = df[field_col].fillna("").astype(str).str.strip() if field_col else ""
+    standardized["AJG Source Year"] = df[source_year_col].fillna("").astype(str).str.strip() if source_year_col else ""
 
-    if ajg_col:
-        standardized["AJG Rating"] = df[ajg_col].apply(standardize_ajg_rating)
-    else:
-        standardized["AJG Rating"] = ""
+    standardized["FT50"] = df[ft50_col].apply(standardize_yes_no) if ft50_col else ""
+    standardized["FT50 ISSN"] = df[ft50_issn_col].apply(normalize_issn) if ft50_issn_col else ""
+    standardized["FT50 Title"] = df[ft50_title_col].fillna("").astype(str).str.strip() if ft50_title_col else ""
 
-    if field_col:
-        standardized["AJG Field"] = df[field_col].fillna("").astype(str).str.strip()
-    else:
-        standardized["AJG Field"] = ""
+    standardized["ABDC Rating"] = df[abdc_col].apply(standardize_abdc_rating) if abdc_col else ""
+    standardized["ABDC Field"] = df[abdc_field_col].fillna("").astype(str).str.strip() if abdc_field_col else ""
+    standardized["JCR Quartile"] = df[jcr_quartile_col].apply(standardize_quartile) if jcr_quartile_col else ""
+    standardized["SJR Quartile"] = df[sjr_quartile_col].apply(standardize_quartile) if sjr_quartile_col else ""
+    standardized["CSSCI"] = df[cssci_col].apply(standardize_list_indicator) if cssci_col else ""
+    standardized["Chinese Core"] = df[chinese_core_col].apply(standardize_list_indicator) if chinese_core_col else ""
+    standardized["School Tier"] = df[school_tier_col].fillna("").astype(str).str.strip() if school_tier_col else ""
+    standardized["Custom Rating"] = df[custom_rating_col].fillna("").astype(str).str.strip() if custom_rating_col else ""
+    standardized["Ranking Tags"] = df[ranking_tags_col].fillna("").astype(str).str.strip() if ranking_tags_col else ""
 
-    if source_year_col:
-        standardized["AJG Source Year"] = (
-            df[source_year_col]
-            .fillna("")
-            .astype(str)
-            .str.strip()
-        )
-    else:
-        standardized["AJG Source Year"] = ""
-
-    if ft50_col:
-        standardized["FT50"] = df[ft50_col].apply(standardize_yes_no)
-    else:
-        standardized["FT50"] = ""
-
-    if ft50_issn_col:
-        standardized["FT50 ISSN"] = df[ft50_issn_col].apply(normalize_issn)
-    else:
-        standardized["FT50 ISSN"] = ""
-
-    if ft50_title_col:
-        standardized["FT50 Title"] = df[ft50_title_col].fillna("").astype(str).str.strip()
-    else:
-        standardized["FT50 Title"] = ""
-
-    if match_note_col:
-        standardized["Ranking Match Note"] = df[match_note_col].fillna("").astype(str).str.strip()
-    else:
-        standardized["Ranking Match Note"] = ""
-
-    if ranking_source_col:
-        standardized["Ranking Source"] = df[ranking_source_col].fillna("").astype(str).str.strip()
-    else:
-        standardized["Ranking Source"] = ""
+    standardized["Ranking Match Note"] = df[match_note_col].fillna("").astype(str).str.strip() if match_note_col else ""
+    standardized["Ranking Source"] = df[ranking_source_col].fillna("").astype(str).str.strip() if ranking_source_col else ""
 
     standardized = standardized[
         standardized["Ranking Journal Normalized"].str.len() > 0
@@ -1803,6 +1979,15 @@ def bibtex_entries_to_library_rows(entries: list) -> list:
                 "AJG Field": "",
                 "AJG Source Year": "",
                 "FT50": "",
+                "ABDC Rating": "",
+                "ABDC Field": "",
+                "JCR Quartile": "",
+                "SJR Quartile": "",
+                "CSSCI": "",
+                "Chinese Core": "",
+                "School Tier": "",
+                "Custom Rating": "",
+                "Ranking Tags": "",
                 "Matched Journal": "",
                 "Ranking Match Status": "No ranking file loaded",
                 "Match Method": "",
@@ -1880,6 +2065,24 @@ def match_library_with_ranking(
 
     ranking_journal_keys = list(ranking_by_journal.keys())
 
+    ranking_columns_to_copy = [
+        "AJG Rating",
+        "AJG Field",
+        "AJG Source Year",
+        "FT50",
+        "ABDC Rating",
+        "ABDC Field",
+        "JCR Quartile",
+        "SJR Quartile",
+        "CSSCI",
+        "Chinese Core",
+        "School Tier",
+        "Custom Rating",
+        "Ranking Tags",
+        "Ranking Source",
+        "Ranking Match Note",
+    ]
+
     for idx, row in enriched.iterrows():
         journal_norm = row.get("Journal Normalized", "")
         issn = row.get("ISSN", "")
@@ -1920,16 +2123,14 @@ def match_library_with_ranking(
                 match_score = f"{best_score:.2f}"
 
         if matched:
-            enriched.at[idx, "AJG Rating"] = matched.get("AJG Rating", "")
-            enriched.at[idx, "AJG Field"] = matched.get("AJG Field", "")
-            enriched.at[idx, "AJG Source Year"] = matched.get("AJG Source Year", "")
-            enriched.at[idx, "FT50"] = matched.get("FT50", "")
+            for col in ranking_columns_to_copy:
+                if col in enriched.columns:
+                    enriched.at[idx, col] = matched.get(col, "")
+
             enriched.at[idx, "Matched Journal"] = matched.get("Ranking Journal", "")
             enriched.at[idx, "Ranking Match Status"] = "Matched"
             enriched.at[idx, "Match Method"] = match_method
             enriched.at[idx, "Match Score"] = match_score
-            enriched.at[idx, "Ranking Source"] = matched.get("Ranking Source", "")
-            enriched.at[idx, "Ranking Match Note"] = matched.get("Ranking Match Note", "")
         else:
             enriched.at[idx, "Ranking Match Status"] = "Unmatched"
             enriched.at[idx, "Match Method"] = ""
@@ -1946,9 +2147,22 @@ def filter_library_dataframe(
     selected_entry_types: list = None,
     selected_ajg_ratings: list = None,
     selected_ft50: list = None,
+    selected_abdc_ratings: list = None,
+    selected_jcr_quartiles: list = None,
+    selected_sjr_quartiles: list = None,
+    selected_cssci: list = None,
+    selected_chinese_core: list = None,
+    selected_school_tiers: list = None,
+    selected_custom_ratings: list = None,
     selected_match_status: list = None,
     only_ajg_3_plus: bool = False,
     only_ft50: bool = False,
+    only_abdc_a_plus: bool = False,
+    only_abdc_a_or_above: bool = False,
+    only_jcr_q1: bool = False,
+    only_sjr_q1: bool = False,
+    only_cssci: bool = False,
+    only_chinese_core: bool = False,
     selected_reading_status: list = None,
     selected_priorities: list = None,
     selected_paper_types: list = None,
@@ -1973,6 +2187,15 @@ def filter_library_dataframe(
             "AJG Rating",
             "AJG Field",
             "FT50",
+            "ABDC Rating",
+            "ABDC Field",
+            "JCR Quartile",
+            "SJR Quartile",
+            "CSSCI",
+            "Chinese Core",
+            "School Tier",
+            "Custom Rating",
+            "Ranking Tags",
             "Matched Journal",
             "Ranking Match Status",
             "Reading Status",
@@ -2011,6 +2234,27 @@ def filter_library_dataframe(
     if selected_ft50:
         filtered = filtered[filtered["FT50"].isin(selected_ft50)]
 
+    if selected_abdc_ratings:
+        filtered = filtered[filtered["ABDC Rating"].isin(selected_abdc_ratings)]
+
+    if selected_jcr_quartiles:
+        filtered = filtered[filtered["JCR Quartile"].isin(selected_jcr_quartiles)]
+
+    if selected_sjr_quartiles:
+        filtered = filtered[filtered["SJR Quartile"].isin(selected_sjr_quartiles)]
+
+    if selected_cssci:
+        filtered = filtered[filtered["CSSCI"].isin(selected_cssci)]
+
+    if selected_chinese_core:
+        filtered = filtered[filtered["Chinese Core"].isin(selected_chinese_core)]
+
+    if selected_school_tiers:
+        filtered = filtered[filtered["School Tier"].isin(selected_school_tiers)]
+
+    if selected_custom_ratings:
+        filtered = filtered[filtered["Custom Rating"].isin(selected_custom_ratings)]
+
     if selected_match_status:
         filtered = filtered[filtered["Ranking Match Status"].isin(selected_match_status)]
 
@@ -2021,6 +2265,24 @@ def filter_library_dataframe(
 
     if only_ft50:
         filtered = filtered[filtered["FT50"] == "Yes"]
+
+    if only_abdc_a_plus:
+        filtered = filtered[filtered["ABDC Rating"].apply(abdc_rating_value) >= abdc_rating_value("A*")]
+
+    if only_abdc_a_or_above:
+        filtered = filtered[filtered["ABDC Rating"].apply(abdc_rating_value) >= abdc_rating_value("A")]
+
+    if only_jcr_q1:
+        filtered = filtered[filtered["JCR Quartile"] == "Q1"]
+
+    if only_sjr_q1:
+        filtered = filtered[filtered["SJR Quartile"] == "Q1"]
+
+    if only_cssci:
+        filtered = filtered[filtered["CSSCI"].fillna("").astype(str).str.strip().ne("")]
+
+    if only_chinese_core:
+        filtered = filtered[filtered["Chinese Core"].fillna("").astype(str).str.strip().ne("")]
 
     if selected_reading_status:
         filtered = filtered[filtered["Reading Status"].isin(selected_reading_status)]
@@ -2038,7 +2300,6 @@ def filter_library_dataframe(
         filtered = filtered[filtered["Important"].astype(bool)]
 
     return filtered
-
 
 def summarize_research_library(df: pd.DataFrame) -> dict:
     """
@@ -2086,9 +2347,10 @@ def summarize_research_library(df: pd.DataFrame) -> dict:
     }
 
 
+
 def summarize_ranking_matches(df: pd.DataFrame) -> dict:
     """
-    Summarize AJG / FT50 matching results.
+    Summarize multi-ranking matching results.
     """
     total = len(df)
 
@@ -2097,6 +2359,12 @@ def summarize_ranking_matches(df: pd.DataFrame) -> dict:
     ajg_3_plus = 0
     ajg_4_plus = 0
     ft50_count = 0
+    abdc_a_plus = 0
+    abdc_a_or_above = 0
+    jcr_q1 = 0
+    sjr_q1 = 0
+    cssci_count = 0
+    chinese_core_count = 0
 
     if total > 0:
         matched = (df["Ranking Match Status"] == "Matched").sum()
@@ -2104,6 +2372,12 @@ def summarize_ranking_matches(df: pd.DataFrame) -> dict:
         ajg_3_plus = df["AJG Rating"].apply(rating_value).ge(3).sum()
         ajg_4_plus = df["AJG Rating"].apply(rating_value).ge(4).sum()
         ft50_count = (df["FT50"] == "Yes").sum()
+        abdc_a_plus = df["ABDC Rating"].apply(abdc_rating_value).ge(abdc_rating_value("A*")).sum()
+        abdc_a_or_above = df["ABDC Rating"].apply(abdc_rating_value).ge(abdc_rating_value("A")).sum()
+        jcr_q1 = (df["JCR Quartile"] == "Q1").sum()
+        sjr_q1 = (df["SJR Quartile"] == "Q1").sum()
+        cssci_count = df["CSSCI"].fillna("").astype(str).str.strip().ne("").sum()
+        chinese_core_count = df["Chinese Core"].fillna("").astype(str).str.strip().ne("").sum()
 
     return {
         "matched": int(matched),
@@ -2111,9 +2385,13 @@ def summarize_ranking_matches(df: pd.DataFrame) -> dict:
         "ajg_3_plus": int(ajg_3_plus),
         "ajg_4_plus": int(ajg_4_plus),
         "ft50_count": int(ft50_count),
+        "abdc_a_plus": int(abdc_a_plus),
+        "abdc_a_or_above": int(abdc_a_or_above),
+        "jcr_q1": int(jcr_q1),
+        "sjr_q1": int(sjr_q1),
+        "cssci_count": int(cssci_count),
+        "chinese_core_count": int(chinese_core_count),
     }
-
-
 
 # ============================================================
 # Research annotation helper functions
@@ -2359,21 +2637,52 @@ def make_tag_frequency_table(
     return tag_df.head(top_n).reset_index(drop=True)
 
 
+
+def first_non_empty(df: pd.DataFrame, col_name: str) -> str:
+    """
+    Return the first non-empty value from a dataframe column.
+    """
+    if col_name not in df.columns:
+        return ""
+
+    values = df[col_name].fillna("").astype(str).str.strip()
+    values = values[values != ""]
+
+    if values.empty:
+        return ""
+
+    return values.iloc[0]
+
+
 def make_top_journal_table(df: pd.DataFrame, top_n: int = 15) -> pd.DataFrame:
     """
-    Build a top-journals table with AJG/FT50 context.
+    Build a top-journals table with multi-ranking context.
     """
     required_col = "Journal / Venue"
 
+    output_columns = [
+        "Journal / Venue",
+        "Count",
+        "Best AJG Rating",
+        "FT50",
+        "Best ABDC Rating",
+        "Best JCR Quartile",
+        "Best SJR Quartile",
+        "CSSCI",
+        "Chinese Core",
+        "School Tier",
+        "Custom Rating",
+    ]
+
     if df.empty or required_col not in df.columns:
-        return pd.DataFrame(columns=["Journal / Venue", "Count", "Best AJG Rating", "FT50"])
+        return pd.DataFrame(columns=output_columns)
 
     working = df.copy()
     working[required_col] = working[required_col].fillna("").astype(str).str.strip()
     working = working[working[required_col] != ""]
 
     if working.empty:
-        return pd.DataFrame(columns=["Journal / Venue", "Count", "Best AJG Rating", "FT50"])
+        return pd.DataFrame(columns=output_columns)
 
     rows = []
 
@@ -2388,7 +2697,32 @@ def make_top_journal_table(df: pd.DataFrame, top_n: int = 15) -> pd.DataFrame:
                 best_value = value
                 best_rating = rating
 
+        abdc_ratings = group.get("ABDC Rating", pd.Series(dtype=str)).fillna("").astype(str).tolist()
+        best_abdc = ""
+        best_abdc_value = -1
+
+        for rating in abdc_ratings:
+            value = abdc_rating_value(rating)
+            if value > best_abdc_value:
+                best_abdc_value = value
+                best_abdc = rating
+
+        def best_quartile(col_name: str) -> str:
+            quartiles = group.get(col_name, pd.Series(dtype=str)).fillna("").astype(str).tolist()
+            best_q = ""
+            best_q_value = -1
+
+            for q in quartiles:
+                value = quartile_value(q)
+                if value > best_q_value:
+                    best_q_value = value
+                    best_q = q
+
+            return best_q
+
         ft50_flag = "Yes" if "FT50" in group.columns and (group["FT50"] == "Yes").any() else ""
+        cssci_flag = "Yes" if "CSSCI" in group.columns and group["CSSCI"].fillna("").astype(str).str.strip().ne("").any() else ""
+        chinese_core_flag = "Yes" if "Chinese Core" in group.columns and group["Chinese Core"].fillna("").astype(str).str.strip().ne("").any() else ""
 
         rows.append(
             {
@@ -2396,6 +2730,13 @@ def make_top_journal_table(df: pd.DataFrame, top_n: int = 15) -> pd.DataFrame:
                 "Count": len(group),
                 "Best AJG Rating": best_rating,
                 "FT50": ft50_flag,
+                "Best ABDC Rating": best_abdc,
+                "Best JCR Quartile": best_quartile("JCR Quartile"),
+                "Best SJR Quartile": best_quartile("SJR Quartile"),
+                "CSSCI": cssci_flag,
+                "Chinese Core": chinese_core_flag,
+                "School Tier": first_non_empty(group, "School Tier"),
+                "Custom Rating": first_non_empty(group, "Custom Rating"),
             }
         )
 
@@ -2432,6 +2773,12 @@ def make_focus_paper_table(
         "Journal / Venue",
         "AJG Rating",
         "FT50",
+        "ABDC Rating",
+        "JCR Quartile",
+        "CSSCI",
+        "Chinese Core",
+        "School Tier",
+        "Custom Rating",
         "Reading Status",
         "Priority",
         "Paper Type",
@@ -2448,7 +2795,6 @@ def make_focus_paper_table(
         working = working.sort_values("Year", ascending=False)
 
     return working[columns].head(max_rows).reset_index(drop=True)
-
 
 def dataframe_to_simple_markdown(df: pd.DataFrame, max_rows: int = 20) -> str:
     """
@@ -2475,6 +2821,7 @@ def dataframe_to_simple_markdown(df: pd.DataFrame, max_rows: int = 20) -> str:
     return "\n".join([header, separator] + rows)
 
 
+
 def build_literature_review_report(df: pd.DataFrame, scope_label: str = "Filtered library") -> str:
     """
     Build a downloadable markdown report for the current research library view.
@@ -2490,6 +2837,24 @@ def build_literature_review_report(df: pd.DataFrame, scope_label: str = "Filtere
         "AJG Rating",
         empty_label="Unmatched / No AJG rating",
         order=["4*", "4", "3", "2", "1", "Unmatched / No AJG rating"],
+    )
+    abdc_table = make_count_table(
+        working,
+        "ABDC Rating",
+        empty_label="No ABDC rating",
+        order=["A*", "A", "B", "C", "No ABDC rating"],
+    )
+    jcr_table = make_count_table(
+        working,
+        "JCR Quartile",
+        empty_label="No JCR quartile",
+        order=["Q1", "Q2", "Q3", "Q4", "No JCR quartile"],
+    )
+    sjr_table = make_count_table(
+        working,
+        "SJR Quartile",
+        empty_label="No SJR quartile",
+        order=["Q1", "Q2", "Q3", "Q4", "No SJR quartile"],
     )
     reading_table = make_count_table(working, "Reading Status", empty_label="Unspecified")
     priority_table = make_count_table(working, "Priority", empty_label="Unspecified")
@@ -2536,10 +2901,28 @@ def build_literature_review_report(df: pd.DataFrame, scope_label: str = "Filtere
 - AJG 3+ references: {ranking_summary['ajg_3_plus']}
 - AJG 4 / 4* references: {ranking_summary['ajg_4_plus']}
 - FT50 references: {ranking_summary['ft50_count']}
+- ABDC A* references: {ranking_summary['abdc_a_plus']}
+- ABDC A / A* references: {ranking_summary['abdc_a_or_above']}
+- JCR Q1 references: {ranking_summary['jcr_q1']}
+- SJR Q1 references: {ranking_summary['sjr_q1']}
+- CSSCI references: {ranking_summary['cssci_count']}
+- Chinese-core references: {ranking_summary['chinese_core_count']}
 
 ### AJG Rating Distribution
 
 {dataframe_to_simple_markdown(ajg_table)}
+
+### ABDC Rating Distribution
+
+{dataframe_to_simple_markdown(abdc_table)}
+
+### JCR Quartile Distribution
+
+{dataframe_to_simple_markdown(jcr_table)}
+
+### SJR Quartile Distribution
+
+{dataframe_to_simple_markdown(sjr_table)}
 
 ### AJG Field Distribution
 
@@ -2589,14 +2972,13 @@ def build_literature_review_report(df: pd.DataFrame, scope_label: str = "Filtere
 
 ## 5. Interpretation Notes
 
-- AJG ranks journals, not individual papers.
-- FT50 identifies journal-list membership, not individual paper quality.
+- Journal rankings classify journals or journal-list membership, not individual paper quality.
+- AJG/ABS, ABDC, FT50, JCR/SJR, CSSCI, Chinese-core, and school-specific lists have different purposes and should not be mechanically compared.
 - Fuzzy journal matches should be manually checked.
 - Use this report as a literature-review management summary, not as a mechanical quality judgement.
 """
 
     return report
-
 
 def build_export_filename(stem: str, extension: str = "csv") -> str:
     """
@@ -2614,7 +2996,7 @@ def build_version_testing_checklist() -> str:
     Build a compact manual testing checklist for Version 2.0F.
     """
     return """
-### Version 2.0F manual testing checklist
+### Version 2.2 manual testing checklist
 
 Use this checklist before pushing or deploying the app.
 
@@ -2625,7 +3007,7 @@ Use this checklist before pushing or deploying the app.
 4. Test BibTeX Cleaner with a messy .bib file.
 5. Test Quality Report with a problematic .bib file.
 6. Open Research Library and upload a .bib file.
-7. Confirm ranking match works with demo/private/uploaded ranking data.
+7. Confirm ranking match works with demo/private/uploaded ranking data, including multi-ranking columns.
 8. Edit Reading Status, Priority, Tags, Citation Candidate, Important, and Notes.
 9. Download the full annotated CSV.
 10. Refresh the app and restore the annotated CSV.
@@ -3839,8 +4221,9 @@ with library_tab:
         """
         Upload a `.bib` file and turn your references into a searchable, editable, and exportable research library.
 
-        **Version 2.0F** is a polish and testing update. It keeps the Version 2.0E dashboard/report workflow,
-        but improves guidance, export filenames, quick health checks, and manual testing support.
+        **Version 2.2** adds multi-ranking support. It keeps the Version 2.0F research-library workflow,
+        and extends ranking enrichment beyond AJG/ABS + FT50 to ABDC, JCR/SJR quartiles,
+        CSSCI / Chinese-core style lists, school tiers, and custom user-defined rankings.
 
         Ranking data is optional:
         - If a private full ranking file exists, BibFlow loads it automatically.
@@ -3854,7 +4237,7 @@ with library_tab:
         "Use the annotated CSV export/restore workflow to continue literature-review work across sessions."
     )
 
-    with st.expander("Version 2.0F sample files and testing checklist", expanded=False):
+    with st.expander("Version 2.2 sample files and testing checklist", expanded=False):
         st.markdown(build_version_testing_checklist())
 
     st.markdown("### 1. Upload BibTeX Library")
@@ -4001,8 +4384,9 @@ with library_tab:
                     """
                     Uploading a ranking file is optional.
 
-                    Use this when you want to match your references with a full AJG, FT50, ABDC,
-                    CSSCI, JCR, or school-specific journal ranking list.
+                    Use this when you want to match your references with AJG/ABS, FT50, ABDC,
+                    JCR/SJR quartiles, CSSCI / Chinese-core style lists, school-specific tiers,
+                    or your own custom ranking categories.
 
                     Recommended columns:
 
@@ -4015,6 +4399,15 @@ with library_tab:
                     ft50
                     ft50_issn
                     ft50_title
+                    abdc_rating
+                    abdc_field
+                    jcr_quartile
+                    sjr_quartile
+                    cssci
+                    chinese_core
+                    school_tier
+                    custom_rating
+                    ranking_tags
                     ```
                     """
                 )
@@ -4130,6 +4523,23 @@ with library_tab:
                 with rank_col5:
                     st.metric("FT50", ranking_summary["ft50_count"])
 
+                multi_rank_col1, multi_rank_col2, multi_rank_col3, multi_rank_col4, multi_rank_col5 = st.columns(5)
+
+                with multi_rank_col1:
+                    st.metric("ABDC A*", ranking_summary["abdc_a_plus"])
+
+                with multi_rank_col2:
+                    st.metric("ABDC A/A*", ranking_summary["abdc_a_or_above"])
+
+                with multi_rank_col3:
+                    st.metric("JCR Q1", ranking_summary["jcr_q1"])
+
+                with multi_rank_col4:
+                    st.metric("CSSCI", ranking_summary["cssci_count"])
+
+                with multi_rank_col5:
+                    st.metric("Chinese Core", ranking_summary["chinese_core_count"])
+
                 ajg_counts = (
                     library_df["AJG Rating"]
                     .fillna("")
@@ -4164,6 +4574,33 @@ with library_tab:
                     with st.expander("FT50 distribution", expanded=False):
                         st.dataframe(
                             ft50_counts,
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+
+                with st.expander("Additional ranking distributions", expanded=False):
+                    extra_dist_col1, extra_dist_col2, extra_dist_col3 = st.columns(3)
+
+                    with extra_dist_col1:
+                        st.markdown("**ABDC Rating**")
+                        st.dataframe(
+                            make_count_table(library_df, "ABDC Rating", empty_label="No ABDC rating", order=["A*", "A", "B", "C", "No ABDC rating"]),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+
+                    with extra_dist_col2:
+                        st.markdown("**JCR Quartile**")
+                        st.dataframe(
+                            make_count_table(library_df, "JCR Quartile", empty_label="No JCR quartile", order=["Q1", "Q2", "Q3", "Q4", "No JCR quartile"]),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+
+                    with extra_dist_col3:
+                        st.markdown("**School / Custom Ratings**")
+                        st.dataframe(
+                            make_count_table(library_df, "Custom Rating", empty_label="No custom rating"),
                             use_container_width=True,
                             hide_index=True,
                         )
@@ -4303,7 +4740,120 @@ with library_tab:
                     key="library_match_status_filter"
                 )
 
-            quick_filter_col1, quick_filter_col2 = st.columns(2)
+            multi_rank_filter_col1, multi_rank_filter_col2, multi_rank_filter_col3 = st.columns(3)
+
+            with multi_rank_filter_col1:
+                abdc_rating_options = sorted(
+                    [
+                        r for r in library_df["ABDC Rating"].dropna().astype(str).unique()
+                        if r.strip()
+                    ],
+                    key=abdc_rating_value,
+                    reverse=True,
+                )
+
+                selected_abdc_ratings = st.multiselect(
+                    "Filter by ABDC rating",
+                    options=abdc_rating_options,
+                    key="library_abdc_rating_filter"
+                )
+
+            with multi_rank_filter_col2:
+                jcr_quartile_options = sorted(
+                    [
+                        q for q in library_df["JCR Quartile"].dropna().astype(str).unique()
+                        if q.strip()
+                    ],
+                    key=quartile_value,
+                    reverse=True,
+                )
+
+                selected_jcr_quartiles = st.multiselect(
+                    "Filter by JCR quartile",
+                    options=jcr_quartile_options,
+                    key="library_jcr_quartile_filter"
+                )
+
+            with multi_rank_filter_col3:
+                sjr_quartile_options = sorted(
+                    [
+                        q for q in library_df["SJR Quartile"].dropna().astype(str).unique()
+                        if q.strip()
+                    ],
+                    key=quartile_value,
+                    reverse=True,
+                )
+
+                selected_sjr_quartiles = st.multiselect(
+                    "Filter by SJR quartile",
+                    options=sjr_quartile_options,
+                    key="library_sjr_quartile_filter"
+                )
+
+            list_filter_col1, list_filter_col2, list_filter_col3 = st.columns(3)
+
+            with list_filter_col1:
+                cssci_options = sorted(
+                    [
+                        x for x in library_df["CSSCI"].dropna().astype(str).unique()
+                        if x.strip()
+                    ]
+                )
+
+                selected_cssci = st.multiselect(
+                    "Filter by CSSCI",
+                    options=cssci_options,
+                    key="library_cssci_filter"
+                )
+
+            with list_filter_col2:
+                chinese_core_options = sorted(
+                    [
+                        x for x in library_df["Chinese Core"].dropna().astype(str).unique()
+                        if x.strip()
+                    ]
+                )
+
+                selected_chinese_core = st.multiselect(
+                    "Filter by Chinese Core",
+                    options=chinese_core_options,
+                    key="library_chinese_core_filter"
+                )
+
+            with list_filter_col3:
+                school_tier_options = sorted(
+                    [
+                        x for x in library_df["School Tier"].dropna().astype(str).unique()
+                        if x.strip()
+                    ]
+                )
+
+                selected_school_tiers = st.multiselect(
+                    "Filter by school tier",
+                    options=school_tier_options,
+                    key="library_school_tier_filter"
+                )
+
+            custom_filter_col1, custom_filter_col2 = st.columns(2)
+
+            with custom_filter_col1:
+                custom_rating_options = sorted(
+                    [
+                        x for x in library_df["Custom Rating"].dropna().astype(str).unique()
+                        if x.strip()
+                    ]
+                )
+
+                selected_custom_ratings = st.multiselect(
+                    "Filter by custom rating",
+                    options=custom_rating_options,
+                    key="library_custom_rating_filter"
+                )
+
+            with custom_filter_col2:
+                st.caption("Version 2.2 supports uploaded multi-ranking files. Empty filters simply mean that no such ranking values were detected.")
+
+            quick_filter_col1, quick_filter_col2, quick_filter_col3, quick_filter_col4 = st.columns(4)
 
             with quick_filter_col1:
                 only_ajg_3_plus = st.checkbox(
@@ -4317,6 +4867,50 @@ with library_tab:
                     "Show only FT50",
                     value=False,
                     key="only_ft50_filter"
+                )
+
+            with quick_filter_col3:
+                only_abdc_a_or_above = st.checkbox(
+                    "Show only ABDC A/A*",
+                    value=False,
+                    key="only_abdc_a_or_above_filter"
+                )
+
+            with quick_filter_col4:
+                only_jcr_q1 = st.checkbox(
+                    "Show only JCR Q1",
+                    value=False,
+                    key="only_jcr_q1_filter"
+                )
+
+            extra_quick_col1, extra_quick_col2, extra_quick_col3, extra_quick_col4 = st.columns(4)
+
+            with extra_quick_col1:
+                only_abdc_a_plus = st.checkbox(
+                    "Show only ABDC A*",
+                    value=False,
+                    key="only_abdc_a_plus_filter"
+                )
+
+            with extra_quick_col2:
+                only_sjr_q1 = st.checkbox(
+                    "Show only SJR Q1",
+                    value=False,
+                    key="only_sjr_q1_filter"
+                )
+
+            with extra_quick_col3:
+                only_cssci = st.checkbox(
+                    "Show only CSSCI",
+                    value=False,
+                    key="only_cssci_filter"
+                )
+
+            with extra_quick_col4:
+                only_chinese_core = st.checkbox(
+                    "Show only Chinese Core",
+                    value=False,
+                    key="only_chinese_core_filter"
                 )
 
             annotation_filter_col1, annotation_filter_col2, annotation_filter_col3 = st.columns(3)
@@ -4366,9 +4960,22 @@ with library_tab:
                 selected_entry_types=selected_entry_types,
                 selected_ajg_ratings=selected_ajg_ratings,
                 selected_ft50=selected_ft50,
+                selected_abdc_ratings=selected_abdc_ratings,
+                selected_jcr_quartiles=selected_jcr_quartiles,
+                selected_sjr_quartiles=selected_sjr_quartiles,
+                selected_cssci=selected_cssci,
+                selected_chinese_core=selected_chinese_core,
+                selected_school_tiers=selected_school_tiers,
+                selected_custom_ratings=selected_custom_ratings,
                 selected_match_status=selected_match_status,
                 only_ajg_3_plus=only_ajg_3_plus,
                 only_ft50=only_ft50,
+                only_abdc_a_plus=only_abdc_a_plus,
+                only_abdc_a_or_above=only_abdc_a_or_above,
+                only_jcr_q1=only_jcr_q1,
+                only_sjr_q1=only_sjr_q1,
+                only_cssci=only_cssci,
+                only_chinese_core=only_chinese_core,
                 selected_reading_status=selected_reading_status,
                 selected_priorities=selected_priorities,
                 selected_paper_types=selected_paper_types,
@@ -4386,6 +4993,15 @@ with library_tab:
                 "AJG Field",
                 "AJG Source Year",
                 "FT50",
+                "ABDC Rating",
+                "ABDC Field",
+                "JCR Quartile",
+                "SJR Quartile",
+                "CSSCI",
+                "Chinese Core",
+                "School Tier",
+                "Custom Rating",
+                "Ranking Tags",
                 "Reading Status",
                 "Paper Type",
                 "Priority",
@@ -4495,7 +5111,7 @@ with library_tab:
                 st.metric("AJG 3+", dashboard_ranking_summary["ajg_3_plus"])
 
             with dash_col3:
-                st.metric("AJG 4 / 4*", dashboard_ranking_summary["ajg_4_plus"])
+                st.metric("ABDC A/A*", dashboard_ranking_summary["abdc_a_or_above"])
 
             with dash_col4:
                 st.metric("Citation Candidates", dashboard_annotation_summary["citation_candidates"])
@@ -4546,6 +5162,35 @@ with library_tab:
 
                 st.markdown("#### AJG Field Distribution")
                 st.dataframe(field_distribution.head(20), use_container_width=True, hide_index=True)
+
+                st.markdown("#### Additional Ranking Systems")
+                multi_dash_col1, multi_dash_col2, multi_dash_col3 = st.columns(3)
+
+                with multi_dash_col1:
+                    abdc_distribution = make_count_table(
+                        dashboard_df,
+                        "ABDC Rating",
+                        empty_label="No ABDC rating",
+                        order=["A*", "A", "B", "C", "No ABDC rating"],
+                    )
+                    st.dataframe(abdc_distribution, use_container_width=True, hide_index=True)
+
+                with multi_dash_col2:
+                    jcr_distribution = make_count_table(
+                        dashboard_df,
+                        "JCR Quartile",
+                        empty_label="No JCR quartile",
+                        order=["Q1", "Q2", "Q3", "Q4", "No JCR quartile"],
+                    )
+                    st.dataframe(jcr_distribution, use_container_width=True, hide_index=True)
+
+                with multi_dash_col3:
+                    list_distribution = make_count_table(
+                        dashboard_df,
+                        "Chinese Core",
+                        empty_label="No Chinese-core flag",
+                    )
+                    st.dataframe(list_distribution, use_container_width=True, hide_index=True)
 
             with dashboard_tab2:
                 reading_distribution = make_count_table(
@@ -4643,6 +5288,11 @@ with library_tab:
 
             for table_name, table_df in [
                 ("ajg_distribution", make_count_table(dashboard_df, "AJG Rating", empty_label="Unmatched / No AJG rating")),
+                ("abdc_distribution", make_count_table(dashboard_df, "ABDC Rating", empty_label="No ABDC rating")),
+                ("jcr_quartile", make_count_table(dashboard_df, "JCR Quartile", empty_label="No JCR quartile")),
+                ("sjr_quartile", make_count_table(dashboard_df, "SJR Quartile", empty_label="No SJR quartile")),
+                ("cssci", make_count_table(dashboard_df, "CSSCI", empty_label="No CSSCI flag")),
+                ("chinese_core", make_count_table(dashboard_df, "Chinese Core", empty_label="No Chinese-core flag")),
                 ("reading_status", make_count_table(dashboard_df, "Reading Status", empty_label="Unspecified")),
                 ("priority", make_count_table(dashboard_df, "Priority", empty_label="Unspecified")),
                 ("paper_type", make_count_table(dashboard_df, "Paper Type", empty_label="Unspecified")),
