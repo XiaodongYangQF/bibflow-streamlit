@@ -1,54 +1,40 @@
+# ============================================================
+# Python / environment
+# ============================================================
+
 __pycache__/
-*.pyc
-.DS_Store
+*.py[cod]
 .env
 .venv/
 venv/
-.ipynb_checkpoints/data/private/
-
+.ipynb_checkpoints/
 
 # ============================================================
-# BibFlow private/local files
-# ============================================================
-
-# Private ranking files should not be committed.
-data/private/
-*.private.csv
-*.private.xlsx
-
-# Local exports from BibFlow
-bibflow_enriched_research_library_*.csv
-bibflow_annotated_research_library_*.csv
-bibflow_unmatched_journals_*.csv
-bibflow_literature_review_report_*.md
-bibflow_dashboard_summary_*.csv
-
-# Python / Streamlit cache
-__pycache__/
-*.py[cod]
-.streamlit/secrets.toml
-
 # macOS
-.DS_Store# ============================================================
-# BibFlow private/local files
 # ============================================================
 
-# Private ranking files should not be committed.
-data/private/
-*.private.csv
-*.private.xlsx
-
-# Local exports from BibFlow
-bibflow_enriched_research_library_*.csv
-bibflow_annotated_research_library_*.csv
-bibflow_unmatched_journals_*.csv
-bibflow_literature_review_report_*.md
-bibflow_dashboard_summary_*.csv
-
-# Python / Streamlit cache
-__pycache__/
-*.py[cod]
-.streamlit/secrets.toml
-
-# macOS
 .DS_Store
+
+# ============================================================
+# Streamlit
+# ============================================================
+
+.streamlit/secrets.toml
+
+# ============================================================
+# BibFlow private/local files
+# ============================================================
+
+data/private/
+*.private.csv
+*.private.xlsx
+
+# Local exports from BibFlow
+bibflow_enriched_research_library_*.csv
+bibflow_annotated_research_library_*.csv
+bibflow_unmatched_journals_*.csv
+bibflow_literature_review_report_*.md
+bibflow_dashboard_summary_*.csv
+
+# Local backup files
+_local_backups/
