@@ -8,6 +8,46 @@ It started as a lightweight DOI-to-BibTeX cleaner. Version 2 expands it into a s
 
 ---
 
+<!-- <div align="center">
+
+<a href="https://x.com/Xiaodong_Yang_/status/2058959988857442374?s=20">
+  <img src="https://img.shields.io/badge/Demo%201-Batch%20DOI%20to%20BibTeX-000000?style=for-the-badge&logo=x&logoColor=white" alt="Watch Tutorial on X">
+</a>
+
+<a href="https://x.com/Xiaodong_Yang_/status/2058959992233906665?s=20">
+  <img src="https://img.shields.io/badge/Demo%202-HTML%20bibliography(Zotero)%20to%20BibTeX-000000?style=for-the-badge&logo=x&logoColor=white" alt="Watch Tutorial on X">
+</a>
+
+<a href="https://bibflow.streamlit.app/">
+  <img src="https://img.shields.io/badge/Launch%20App-Streamlit-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white" alt="Launch App">
+</a>
+
+</div> -->
+
+
+<div align="center">
+
+<p>
+  <a href="https://x.com/Xiaodong_Yang_/status/2058959988857442374?s=20">
+    <img height="32" src="https://img.shields.io/badge/Demo%201-Batch%20DOI%20to%20BibTeX-000000?style=for-the-badge&logo=x&logoColor=white" alt="Demo 1">
+  </a>
+  &nbsp;
+  <a href="https://x.com/Xiaodong_Yang_/status/2058959992233906665?s=20">
+    <img height="32" src="https://img.shields.io/badge/Demo%202-Zotero%20HTML%20to%20BibTeX-000000?style=for-the-badge&logo=x&logoColor=white" alt="Demo 2">
+  </a>
+</p>
+
+<p>
+  <a href="https://YOUR_STREAMLIT_APP_URL">
+    <img height="32" src="https://img.shields.io/badge/Launch%20App-Streamlit-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white" alt="Launch App">
+  </a>
+</p>
+
+</div>
+
+
+---
+
 ## Why BibFlow?
 
 Academic writing often involves repetitive reference work:
@@ -32,7 +72,7 @@ Below are two short demos showing the main BibFlow workflow.
 <!-- ### Demo 1 — DOI to Clean BibTeX Workflow  -->
 ### Demo 1 — Paste DOIs ⚡️ Get perfect .bib
 
-<video src="docs/videos/bibflow_demo_1.mp4" width="85%" controls muted playsinline preload="metadata">
+<!-- <video src="docs/videos/bibflow_demo_1.mp4" width="85%" controls muted playsinline preload="metadata">
   Your browser does not support the video tag.
 </video>
 
@@ -42,14 +82,38 @@ Below are two short demos showing the main BibFlow workflow.
   <img src="https://img.shields.io/badge/Watch%20Demo%201-X%20Video-000000?style=for-the-badge&logo=x&logoColor=white" alt="Watch Tutorial on X">
 </a>
 
+<br><br> -->
+
+<a href="https://x.com/Xiaodong_Yang_/status/2058959988857442374?s=20">
+  <img src="docs/screenshots/demo_1_thumbnail.png" width="85%" alt="BibFlow Demo 1">
+</a>
+
+<br>
+
+<a href="https://x.com/Xiaodong_Yang_/status/2058959988857442374?s=20">
+  <img src="https://img.shields.io/badge/Watch%20Demo%201-X%20Video-000000?style=for-the-badge&logo=x&logoColor=white" alt="Watch Tutorial on X">
+</a>
+
 <br><br>
+
+
 
 <!-- ### Demo 2 — Research Library and Ranking Workflow -->
 ### Demo 2 — HTML bibliography (Zotero) ⚡️ Get clean BibTeX
 
-<video src="docs/videos/bibflow_demo_2.mp4" width="85%" controls muted playsinline preload="metadata">
+<!-- <video src="docs/videos/bibflow_demo_2.mp4" width="85%" controls muted playsinline preload="metadata">
   Your browser does not support the video tag.
 </video>
+
+<br>
+
+<a href="https://x.com/Xiaodong_Yang_/status/2058959992233906665?s=20">
+  <img src="https://img.shields.io/badge/Watch%20Demo%202-X%20Video-000000?style=for-the-badge&logo=x&logoColor=white" alt="Watch Tutorial on X">
+</a> -->
+
+<a href="https://x.com/Xiaodong_Yang_/status/2058959992233906665?s=20">
+  <img src="docs/screenshots/demo_2_thumbnail.png" width="85%" alt="BibFlow Demo 2">
+</a>
 
 <br>
 
