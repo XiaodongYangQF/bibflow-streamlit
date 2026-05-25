@@ -4,9 +4,9 @@
 
 It started as a lightweight DOI-to-BibTeX cleaner. Version 2 expands it into a small research library manager: users can clean references, merge BibTeX files, check reference quality, match journals against uploaded ranking files, annotate papers, restore previous annotations, and export literature-review summaries.
 
-> Current public-demo target: **Version 2.1A — README + Public Demo Documentation**
+<!-- > Current public-demo target: **Version 2.1A — README + Public Demo Documentation** -->
 
----
+<!-- --- -->
 
 <!-- <div align="center">
 
@@ -29,22 +29,26 @@ It started as a lightweight DOI-to-BibTeX cleaner. Version 2 expands it into a s
 
 <p>
   <a href="https://x.com/Xiaodong_Yang_/status/2058959988857442374?s=20">
-    <img height="32" src="https://img.shields.io/badge/Demo%201-Batch%20DOI%20to%20BibTeX-000000?style=for-the-badge&logo=x&logoColor=white" alt="Demo 1">
+    <!-- <img height="32" src="https://img.shields.io/badge/Demo%201-Batch%20DOI%20to%20BibTeX-000000?style=for-the-badge&logo=x&logoColor=white" alt="Demo 1"> -->
+    <img height="30" src="https://img.shields.io/badge/Demo%201-Batch%20DOI%20to%20BibTeX-000000?style=for-the-badge&logo=x&logoColor=white" alt="Demo 1">
   </a>
   &nbsp;
   <a href="https://x.com/Xiaodong_Yang_/status/2058959992233906665?s=20">
-    <img height="32" src="https://img.shields.io/badge/Demo%202-Zotero%20HTML%20to%20BibTeX-000000?style=for-the-badge&logo=x&logoColor=white" alt="Demo 2">
+    <!-- <img height="32" src="https://img.shields.io/badge/Demo%202-Zotero%20HTML%20to%20BibTeX-000000?style=for-the-badge&logo=x&logoColor=white" alt="Demo 2"> -->
+    <img height="30" src="https://img.shields.io/badge/Demo%202-Zotero%20HTML%20to%20BibTeX-000000?style=for-the-badge&logo=x&logoColor=white" alt="Demo 2">
   </a>
 </p>
 
 <p>
   <a href="https://YOUR_STREAMLIT_APP_URL">
-    <img height="32" src="https://img.shields.io/badge/Launch%20App-Streamlit-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white" alt="Launch App">
+    <!-- <img height="32" src="https://img.shields.io/badge/Launch%20App-Streamlit-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white" alt="Launch App"> -->
+    <img height="30" src="https://img.shields.io/badge/Launch%20App-Streamlit-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white" alt="Launch App">
   </a>
 </p>
 
 </div>
 
+> **Current public-demo target:** Version 2.1A — README + Public Demo Documentation
 
 ---
 
