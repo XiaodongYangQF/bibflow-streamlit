@@ -23,6 +23,44 @@ BibFlow combines these tasks in one simple Streamlit app.
 
 ---
 
+## Demo Videos
+
+Below are two short demos showing the main BibFlow workflow.
+
+<div align="center">
+
+<!-- ### Demo 1 — DOI to Clean BibTeX Workflow  -->
+### Demo 1 — Paste DOIs ⚡️ Get perfect .bib
+
+<video src="docs/videos/bibflow_demo_1.mp4" width="85%" controls muted playsinline preload="metadata">
+  Your browser does not support the video tag.
+</video>
+
+<br>
+
+<a href="https://x.com/Xiaodong_Yang_/status/2058959988857442374?s=20">
+  <img src="https://img.shields.io/badge/Watch%20Demo%201-X%20Video-000000?style=for-the-badge&logo=x&logoColor=white" alt="Watch Tutorial on X">
+</a>
+
+<br><br>
+
+<!-- ### Demo 2 — Research Library and Ranking Workflow -->
+### Demo 2 — HTML bibliography (Zotero) ⚡️ Get clean BibTeX
+
+<video src="docs/videos/bibflow_demo_2.mp4" width="85%" controls muted playsinline preload="metadata">
+  Your browser does not support the video tag.
+</video>
+
+<br>
+
+<a href="https://x.com/Xiaodong_Yang_/status/2058959992233906665?s=20">
+  <img src="https://img.shields.io/badge/Watch%20Demo%202-X%20Video-000000?style=for-the-badge&logo=x&logoColor=white" alt="Watch Tutorial on X">
+</a>
+
+</div>
+
+---
+
 ## Main Features
 
 ### 1. DOI to BibTeX
