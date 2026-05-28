@@ -36,7 +36,7 @@ st.set_page_config(
 # App branding and UI helpers
 # ============================================================
 
-APP_VERSION = "2.4.1"
+APP_VERSION = "2.5"
 APP_NAME = "BibFlow"
 APP_TAGLINE = "A polished research library assistant for BibTeX, Overleaf, Zotero HTML exports, journal rankings, and literature review workflows"
 
@@ -863,17 +863,17 @@ def decode_bibtex_html_entities(value) -> str:
 
 def normalize_bibtex_page_range(value) -> str:
     """
-    Normalize BibTeX page ranges.
+    Normalize page ranges for BibTeX output.
 
-    Metadata providers sometimes return Unicode dashes, and copied/exported
-    text can contain mojibake such as "151â€“180". BibTeX expects page ranges
-    to use double hyphens, for example "151--180".
+    Metadata providers may return an en dash, em dash, or mojibake
+    caused by encoding problems. BibTeX page ranges should use double
+    hyphens, e.g. 151--180.
     """
     text = decode_bibtex_html_entities(value)
 
     replacements = {
-        "â€“": "--",   # mojibake / broken en dash
-        "â€”": "--",   # mojibake / broken em dash
+        "â€“": "--",   # mojibake for en dash
+        "â€”": "--",   # mojibake for em dash
         "–": "--",    # en dash
         "—": "--",    # em dash
         "−": "-",     # mathematical minus sign
@@ -882,19 +882,10 @@ def normalize_bibtex_page_range(value) -> str:
     for old, new in replacements.items():
         text = text.replace(old, new)
 
-    # Convert common numeric page ranges written with a single hyphen
-    # into BibTeX's preferred double-hyphen range syntax.
-    text = re.sub(r"(?<=\d)\s*-\s*(?=\d)", "--", text)
+    # Normalize accidental spaces around page ranges.
+    text = re.sub(r"\s*--\s*", "--", text)
 
-    # Collapse accidental repeated hyphens to a clean BibTeX range marker.
-    text = re.sub(r"-{2,}", "--", text)
-
-    return text.strip()
-
-
-# Backward-compatible alias in case older code calls the previous helper name.
-def normalize_bibtex_pages(value) -> str:
-    return normalize_bibtex_page_range(value)
+    return text
 
 
 def escape_latex_special_chars(value) -> str:
@@ -952,7 +943,11 @@ def prepare_bibtex_export_value(key: str, value) -> str:
     return escape_latex_special_chars(value)
 
 
-def apply_export_preset_to_entry(entry: dict, export_preset: str) -> dict:
+def apply_export_preset_to_entry(
+    entry: dict,
+    export_preset: str,
+    remove_url_when_doi_exists: bool = True,
+) -> dict:
     """
     Apply a BibTeX export preset to one entry.
 
@@ -972,10 +967,27 @@ def apply_export_preset_to_entry(entry: dict, export_preset: str) -> dict:
     if "ID" in entry:
         exported["ID"] = entry["ID"]
 
+    has_doi = bool(normalize_doi(decode_bibtex_html_entities(entry.get("doi", ""))))
+
+    def should_skip_export_field(field_name: str) -> bool:
+        """
+        Optionally remove URL when DOI is available.
+
+        For journal articles, DOI is usually cleaner than repeating
+        http://dx.doi.org/... in the bibliography. This keeps exported
+        references shorter and avoids bold "URL:" lines in some LaTeX styles.
+        """
+        return (
+            remove_url_when_doi_exists
+            and has_doi
+            and str(field_name).lower() == "url"
+        )
+
     if preset["keep_all_fields"]:
         for key, value in entry.items():
-            if key not in {"ENTRYTYPE", "ID"}:
-                exported[key] = prepare_bibtex_export_value(key, value)
+            if key in {"ENTRYTYPE", "ID"} or should_skip_export_field(key):
+                continue
+            exported[key] = prepare_bibtex_export_value(key, value)
         return exported
 
     keep_fields = preset["keep_fields"]
@@ -983,11 +995,13 @@ def apply_export_preset_to_entry(entry: dict, export_preset: str) -> dict:
     # Add fields in a stable, readable order.
     for field in FIELD_ORDER:
         if field in keep_fields and field in entry:
+            if should_skip_export_field(field):
+                continue
             exported[field] = prepare_bibtex_export_value(field, entry[field])
 
     # Add any remaining allowed fields not included in FIELD_ORDER.
     for key, value in entry.items():
-        if key in {"ENTRYTYPE", "ID"}:
+        if key in {"ENTRYTYPE", "ID"} or should_skip_export_field(key):
             continue
 
         if key in keep_fields and key not in exported:
@@ -996,12 +1010,20 @@ def apply_export_preset_to_entry(entry: dict, export_preset: str) -> dict:
     return exported
 
 
-def apply_export_preset_to_entries(entries: list, export_preset: str) -> list:
+def apply_export_preset_to_entries(
+    entries: list,
+    export_preset: str,
+    remove_url_when_doi_exists: bool = True,
+) -> list:
     """
     Apply a BibTeX export preset to multiple entries.
     """
     return [
-        apply_export_preset_to_entry(entry, export_preset)
+        apply_export_preset_to_entry(
+            entry,
+            export_preset,
+            remove_url_when_doi_exists=remove_url_when_doi_exists,
+        )
         for entry in entries
     ]
 
@@ -1030,6 +1052,7 @@ def entry_to_bibtex(
     export_preset: str = "Overleaf Clean",
     sort_entries: bool = False,
     include_header: bool = False,
+    remove_url_when_doi_exists: bool = True,
 ) -> str:
     """
     Convert one BibTeX entry dictionary back to BibTeX string.
@@ -1039,6 +1062,7 @@ def entry_to_bibtex(
         export_preset=export_preset,
         sort_entries=sort_entries,
         include_header=include_header,
+        remove_url_when_doi_exists=remove_url_when_doi_exists,
     )
 
 
@@ -1047,11 +1071,16 @@ def entries_to_bibtex(
     export_preset: str = "Overleaf Clean",
     sort_entries: bool = False,
     include_header: bool = False,
+    remove_url_when_doi_exists: bool = True,
 ) -> str:
     """
     Convert multiple BibTeX entries into one BibTeX string using export options.
     """
-    export_entries = apply_export_preset_to_entries(entries, export_preset)
+    export_entries = apply_export_preset_to_entries(
+        entries,
+        export_preset,
+        remove_url_when_doi_exists=remove_url_when_doi_exists,
+    )
 
     if sort_entries:
         export_entries = sort_entries_by_key(export_entries)
@@ -3649,6 +3678,15 @@ include_export_header = st.sidebar.checkbox(
     value=True
 )
 
+remove_url_when_doi_exists = st.sidebar.checkbox(
+    "Remove URL when DOI exists",
+    value=True,
+    help=(
+        "Recommended for journal articles. If an entry has a DOI, BibFlow will "
+        "omit the URL field to keep the LaTeX bibliography cleaner."
+    ),
+)
+
 
 st.sidebar.markdown("---")
 
@@ -3770,6 +3808,7 @@ with single_tab:
             export_preset=export_preset,
             sort_entries=sort_bib_entries,
             include_header=include_export_header,
+            remove_url_when_doi_exists=remove_url_when_doi_exists,
         )
 
         left_col, right_col = st.columns(2)
@@ -3968,6 +4007,7 @@ with batch_tab:
                 export_preset=export_preset,
                 sort_entries=sort_bib_entries,
                 include_header=include_export_header,
+                remove_url_when_doi_exists=remove_url_when_doi_exists,
             )
 
             st.markdown("### New BibTeX Entries")
@@ -4247,6 +4287,7 @@ with html_tab:
                     export_preset=export_preset,
                     sort_entries=sort_bib_entries,
                     include_header=include_export_header,
+                    remove_url_when_doi_exists=remove_url_when_doi_exists,
                 )
 
                 st.markdown("### Clean BibTeX Generated from Zotero HTML")
@@ -4468,6 +4509,7 @@ with title_tab:
                 export_preset=export_preset,
                 sort_entries=sort_bib_entries,
                 include_header=include_export_header,
+                remove_url_when_doi_exists=remove_url_when_doi_exists,
             )
 
             left_col, right_col = st.columns(2)
@@ -4637,6 +4679,7 @@ with cleaner_tab:
                 export_preset=export_preset,
                 sort_entries=sort_bib_entries,
                 include_header=include_export_header,
+                remove_url_when_doi_exists=remove_url_when_doi_exists,
             )
 
             st.markdown("### Cleaned BibTeX")
