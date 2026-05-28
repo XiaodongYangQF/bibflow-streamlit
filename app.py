@@ -36,7 +36,7 @@ st.set_page_config(
 # App branding and UI helpers
 # ============================================================
 
-APP_VERSION = "2.3"
+APP_VERSION = "2.4.1"
 APP_NAME = "BibFlow"
 APP_TAGLINE = "A polished research library assistant for BibTeX, Overleaf, Zotero HTML exports, journal rankings, and literature review workflows"
 
@@ -630,10 +630,16 @@ def crossref_items_to_rows(items: list) -> list:
 def clean_text(text: str) -> str:
     """
     Remove braces and unnecessary spaces from BibTeX fields.
+
+    BibTeX metadata fetched from DOI/Crossref can contain HTML entities
+    such as S&amp;P or Journal of Banking &amp; Finance. Decode them here so
+    previews, citation-key generation, ranking matching, and exports all use
+    normal text before LaTeX escaping is applied at export time.
     """
     if not text:
         return ""
 
+    text = html_lib.unescape(str(text))
     text = text.replace("{", "").replace("}", "")
     text = re.sub(r"\s+", " ", text)
 
@@ -824,9 +830,136 @@ def parse_bibtex(raw_bibtex: str):
     return database.entries[0]
 
 
+# ============================================================
+# BibTeX / LaTeX export safety helpers
+# ============================================================
+
+BIBTEX_RAW_EXPORT_FIELDS = {
+    "doi",
+    "url",
+    "link",
+    "file",
+    "eprint",
+    "archiveprefix",
+    "primaryclass",
+    "issn",
+    "isbn",
+}
+
+
+def decode_bibtex_html_entities(value) -> str:
+    """
+    Decode HTML entities commonly returned by metadata providers.
+
+    Examples:
+    - S&amp;P 500 -> S&P 500
+    - Journal of Banking &amp; Finance -> Journal of Banking & Finance
+    """
+    if value is None:
+        return ""
+
+    return html_lib.unescape(str(value)).strip()
+
+
+def normalize_bibtex_page_range(value) -> str:
+    """
+    Normalize BibTeX page ranges.
+
+    Metadata providers sometimes return Unicode dashes, and copied/exported
+    text can contain mojibake such as "151â€“180". BibTeX expects page ranges
+    to use double hyphens, for example "151--180".
+    """
+    text = decode_bibtex_html_entities(value)
+
+    replacements = {
+        "â€“": "--",   # mojibake / broken en dash
+        "â€”": "--",   # mojibake / broken em dash
+        "–": "--",    # en dash
+        "—": "--",    # em dash
+        "−": "-",     # mathematical minus sign
+    }
+
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+
+    # Convert common numeric page ranges written with a single hyphen
+    # into BibTeX's preferred double-hyphen range syntax.
+    text = re.sub(r"(?<=\d)\s*-\s*(?=\d)", "--", text)
+
+    # Collapse accidental repeated hyphens to a clean BibTeX range marker.
+    text = re.sub(r"-{2,}", "--", text)
+
+    return text.strip()
+
+
+# Backward-compatible alias in case older code calls the previous helper name.
+def normalize_bibtex_pages(value) -> str:
+    return normalize_bibtex_page_range(value)
+
+
+def escape_latex_special_chars(value) -> str:
+    """
+    Decode HTML entities first, then escape LaTeX special characters in
+    normal BibTeX text fields.
+
+    This prevents LaTeX/BibTeX errors such as:
+    - Misplaced alignment tab character &
+
+    Examples:
+    - S&amp;P 500 -> S\\&P 500
+    - Journal of Banking &amp; Finance -> Journal of Banking \\& Finance
+    """
+    text = decode_bibtex_html_entities(value)
+
+    replacements = {
+        "&": r"\&",
+        "%": r"\%",
+        "$": r"\$",
+        "#": r"\#",
+        "_": r"\_",
+    }
+
+    result = ""
+
+    for i, char in enumerate(text):
+        previous = text[i - 1] if i > 0 else ""
+
+        # Avoid double escaping existing LaTeX, e.g. keep \& as \&.
+        if char in replacements and previous != "\\":
+            result += replacements[char]
+        else:
+            result += char
+
+    return result
+
+
+def prepare_bibtex_export_value(key: str, value) -> str:
+    """
+    Prepare one BibTeX field value before BibTexWriter writes the entry.
+
+    Normal text fields need LaTeX escaping. DOI/URL-like fields should be
+    decoded from HTML entities but otherwise kept raw, because bibliography
+    styles usually place them inside URL-aware commands.
+    """
+    key_lower = str(key).lower()
+
+    if key_lower == "pages":
+        return normalize_bibtex_page_range(value)
+
+    if key_lower in BIBTEX_RAW_EXPORT_FIELDS:
+        return decode_bibtex_html_entities(value)
+
+    return escape_latex_special_chars(value)
+
+
 def apply_export_preset_to_entry(entry: dict, export_preset: str) -> dict:
     """
     Apply a BibTeX export preset to one entry.
+
+    This is also the central BibTeX export-safety layer. Every exported
+    normal text field is HTML-decoded and LaTeX-escaped here, so all workflows
+    that call entry_to_bibtex() / entries_to_bibtex() benefit from the fix:
+    Single DOI, Batch DOI, Title Search, Zotero HTML Import, and BibTeX Cleaner.
     """
     preset = EXPORT_PRESETS.get(export_preset, EXPORT_PRESETS["Overleaf Clean"])
 
@@ -842,7 +975,7 @@ def apply_export_preset_to_entry(entry: dict, export_preset: str) -> dict:
     if preset["keep_all_fields"]:
         for key, value in entry.items():
             if key not in {"ENTRYTYPE", "ID"}:
-                exported[key] = value
+                exported[key] = prepare_bibtex_export_value(key, value)
         return exported
 
     keep_fields = preset["keep_fields"]
@@ -850,7 +983,7 @@ def apply_export_preset_to_entry(entry: dict, export_preset: str) -> dict:
     # Add fields in a stable, readable order.
     for field in FIELD_ORDER:
         if field in keep_fields and field in entry:
-            exported[field] = entry[field]
+            exported[field] = prepare_bibtex_export_value(field, entry[field])
 
     # Add any remaining allowed fields not included in FIELD_ORDER.
     for key, value in entry.items():
@@ -858,7 +991,7 @@ def apply_export_preset_to_entry(entry: dict, export_preset: str) -> dict:
             continue
 
         if key in keep_fields and key not in exported:
-            exported[key] = value
+            exported[key] = prepare_bibtex_export_value(key, value)
 
     return exported
 
@@ -1519,7 +1652,7 @@ def normalize_journal_name_for_matching(name: str) -> str:
     if name is None or pd.isna(name):
         return ""
 
-    name = str(name).lower().strip()
+    name = html_lib.unescape(str(name)).lower().strip()
 
     name = name.replace("&", " and ")
     name = name.replace("{", "").replace("}", "")
