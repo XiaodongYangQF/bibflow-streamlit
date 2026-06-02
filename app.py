@@ -2,6 +2,7 @@ import re
 import html as html_lib
 from urllib.parse import unquote
 from datetime import datetime
+import traceback
 import requests
 import pandas as pd
 import streamlit as st
@@ -817,12 +818,101 @@ def make_unique_key(base_key: str, used_keys: set) -> str:
     return f"{base_key}_{counter}"
 
 
+MONTH_MAP = {
+    "1": "jan", "01": "jan", "jan": "jan", "january": "jan",
+    "2": "feb", "02": "feb", "feb": "feb", "february": "feb",
+    "3": "mar", "03": "mar", "mar": "mar", "march": "mar",
+    "4": "apr", "04": "apr", "apr": "apr", "april": "apr",
+    "5": "may", "05": "may", "may": "may",
+    "6": "jun", "06": "jun", "jun": "jun", "june": "jun",
+    "7": "jul", "07": "jul", "jul": "jul", "july": "jul",
+    "8": "aug", "08": "aug", "aug": "aug", "august": "aug",
+    "9": "sep", "09": "sep", "sep": "sep", "sept": "sep", "september": "sep",
+    "10": "oct", "oct": "oct", "october": "oct",
+    "11": "nov", "nov": "nov", "november": "nov",
+    "12": "dec", "dec": "dec", "december": "dec",
+}
+
+
+def normalize_bibtex_month(value) -> str:
+    """
+    Normalize month values to BibTeX-safe short forms.
+    Examples:
+    june -> jun
+    sept -> sep
+    September -> sep
+    """
+    if value is None:
+        return ""
+
+    key = str(value).strip().strip("{}").strip('"').strip("'").lower().replace(".", "")
+
+    return MONTH_MAP.get(key, key)
+
+
+def normalize_raw_bibtex_month_field(raw_bibtex: str) -> str:
+    """
+    Fix problematic month fields before bibtexparser reads the entry.
+
+    This version handles both multi-line and one-line BibTeX entries, for example:
+
+        month = june,
+        month = {june},
+        month={sept},
+        year={2025}, month = sept, pages={1--10}
+
+    The previous version only matched month fields at the beginning of a line.
+    Some DOI providers return one-line BibTeX, so `month = june` or
+    `month = sept` could still reach bibtexparser and fail.
+    """
+    if not raw_bibtex:
+        return raw_bibtex
+
+    def replace_month(match):
+        prefix = match.group(1)
+        raw_value = match.group(2)
+        suffix = match.group(3)
+
+        normalized = normalize_bibtex_month(raw_value)
+
+        if normalized:
+            return f"{prefix}{{{normalized}}}{suffix}"
+
+        return match.group(0)
+
+    # Do not anchor at line start. DOI/Crossref often returns one-line BibTeX.
+    # The value part supports {month}, "month", and unbraced month tokens.
+    return re.sub(
+        r"(?i)(\bmonth\s*=\s*)(\{[^{}]*\}|\"[^\"]*\"|'[^']*'|[^,\n}]+)(\s*,?)",
+        replace_month,
+        raw_bibtex,
+    )
+
+
+def load_bibtex_database(raw_bibtex: str):
+    """
+    Load BibTeX robustly after normalizing month fields.
+
+    First try common_strings=True, which understands standard BibTeX
+    month macros. If a provider still gives a non-standard macro, fall
+    back to common_strings=False instead of failing the whole DOI.
+    """
+    raw_bibtex = normalize_raw_bibtex_month_field(raw_bibtex)
+
+    parser = bibtexparser.bparser.BibTexParser(common_strings=True)
+
+    try:
+        return bibtexparser.loads(raw_bibtex, parser=parser)
+    except KeyError:
+        fallback_parser = bibtexparser.bparser.BibTexParser(common_strings=False)
+        return bibtexparser.loads(raw_bibtex, parser=fallback_parser)
+
+
 def parse_bibtex(raw_bibtex: str):
     """
     Parse BibTeX and return first entry.
     """
-    parser = bibtexparser.bparser.BibTexParser(common_strings=True)
-    database = bibtexparser.loads(raw_bibtex, parser=parser)
+    database = load_bibtex_database(raw_bibtex)
 
     if not database.entries:
         return None
@@ -927,15 +1017,14 @@ def escape_latex_special_chars(value) -> str:
 def prepare_bibtex_export_value(key: str, value) -> str:
     """
     Prepare one BibTeX field value before BibTexWriter writes the entry.
-
-    Normal text fields need LaTeX escaping. DOI/URL-like fields should be
-    decoded from HTML entities but otherwise kept raw, because bibliography
-    styles usually place them inside URL-aware commands.
     """
     key_lower = str(key).lower()
 
     if key_lower == "pages":
         return normalize_bibtex_page_range(value)
+
+    if key_lower == "month":
+        return normalize_bibtex_month(value)
 
     if key_lower in BIBTEX_RAW_EXPORT_FIELDS:
         return decode_bibtex_html_entities(value)
@@ -1115,7 +1204,7 @@ def parse_existing_bib(uploaded_file):
         return set(), set(), "", 0
 
     content = uploaded_file.getvalue().decode("utf-8", errors="ignore")
-    database = bibtexparser.loads(content)
+    database = load_bibtex_database(content)
 
     existing_keys = set()
     existing_dois = set()
@@ -1174,7 +1263,6 @@ def build_merged_bib(existing_bib_content: str, new_bibtex: str) -> str:
 
     return new_clean
 
-
 def parse_bibtex_entries(raw_bibtex: str) -> list:
     """
     Parse raw BibTeX text and return all entries.
@@ -1182,8 +1270,7 @@ def parse_bibtex_entries(raw_bibtex: str) -> list:
     if not raw_bibtex.strip():
         return []
 
-    parser = bibtexparser.bparser.BibTexParser(common_strings=True)
-    database = bibtexparser.loads(raw_bibtex, parser=parser)
+    database = load_bibtex_database(raw_bibtex)
 
     return database.entries
 
@@ -3973,9 +4060,12 @@ with batch_tab:
                         "Citation Key": "",
                         "Duplicate DOI in uploaded .bib": False,
                         "Action": "Failed",
-                        "Status": f"Failed: {e}",
+                        "Status": f"{type(e).__name__}: {e}",
                     }
                 )
+
+                with st.expander(f"Debug traceback for failed DOI: {doi}", expanded=False):
+                    st.code(traceback.format_exc(), language="python")
 
             progress_bar.progress(i / len(dois))
 
@@ -4260,9 +4350,12 @@ with html_tab:
                             "DOI": doi,
                             "Citation Key": "",
                             "Action": "Failed",
-                            "Status": f"Failed: {e}",
+                            "Status": f"{type(e).__name__}: {e}",
                         }
                     )
+
+                    with st.expander(f"Debug traceback for failed DOI: {doi}", expanded=False):
+                        st.code(traceback.format_exc(), language="python")
 
                 progress_bar.progress(i / len(unique_dois))
 
